@@ -1,6 +1,7 @@
 import React, {useEffect, useState} from 'react';
 import {LayoutChangeEvent, Platform, StyleSheet, Text, View} from 'react-native';
 import Animated, {Easing, useAnimatedStyle, useSharedValue, withDelay, withTiming} from 'react-native-reanimated';
+import {PRIMARY} from '../utils/theme';
 
 type Props = {
   title?: string;
@@ -12,7 +13,7 @@ type Props = {
 };
 
 const BLUE_TEXT = '#ffffff';
-const UNDERLINE_COLOR = '#e6f3ff';
+const UNDERLINE_COLOR = '#fce7e7';
 
 export default function BrandLogo({
   title = 'Inspecto',
@@ -79,10 +80,10 @@ const styles = StyleSheet.create({
   underlineRow: {marginTop: 6, flexDirection: 'row', alignItems: 'center', height: 10},
   underline: {height: 3, backgroundColor: UNDERLINE_COLOR, borderRadius: 3},
   car: {position: 'absolute', left: 0, width: 54, height: 24, transform: [{translateX: -18}]},
-  carBody: {position: 'absolute', left: 8, right: 8, bottom: 8, top: 6, backgroundColor: '#f8fbff', borderRadius: 6},
-  carWindow: {position: 'absolute', left: 14, top: -8, width: 22, height: 12, backgroundColor: '#e3f2ff', borderTopLeftRadius: 6, borderTopRightRadius: 6},
-  wheel: {position: 'absolute', bottom: 0, width: 12, height: 12, borderRadius: 6, backgroundColor: '#0b2447'},
+  carBody: {position: 'absolute', left: 8, right: 8, bottom: 8, top: 6, backgroundColor: '#fef2f2', borderRadius: 6},
+  carWindow: {position: 'absolute', left: 14, top: -8, width: 22, height: 12, backgroundColor: '#fee2e2', borderTopLeftRadius: 6, borderTopRightRadius: 6},
+  wheel: {position: 'absolute', bottom: 0, width: 12, height: 12, borderRadius: 6, backgroundColor: '#111827'},
   leftWheel: {left: 12},
   rightWheel: {right: 12},
-  wrench: {width: 18, height: 18, borderTopWidth: 4, borderRightWidth: 4, borderColor: '#e6f3ff', borderRadius: 2, transform: [{rotate: '45deg'}]},
+  wrench: {width: 18, height: 18, borderTopWidth: 4, borderRightWidth: 4, borderColor: UNDERLINE_COLOR, borderRadius: 2, transform: [{rotate: '45deg'}]},
 });

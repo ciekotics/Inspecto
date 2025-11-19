@@ -2,17 +2,23 @@ import React, {useEffect, useState} from 'react';
 import {SafeAreaView, View, Text, StyleSheet, Image, useWindowDimensions, TextInput, Pressable, KeyboardAvoidingView, Platform} from 'react-native';
 import Animated, {useSharedValue, withTiming, withDelay, useAnimatedStyle, Easing} from 'react-native-reanimated';
 import {SharedElement} from 'react-navigation-shared-element';
+import {useNavigation} from '@react-navigation/native';
+import {useAppDispatch, useAppSelector} from '../store/hooks';
+import {login} from '../store/slices/authSlice';
+import {PRIMARY, PRIMARY_DARK} from '../utils/theme';
 
-const BLUE = '#0ea5e9';
-
-export default function BrandScreen() {
+export default function LoginScreen() {
   const {width} = useWindowDimensions();
+  const dispatch = useAppDispatch();
+  const auth = useAppSelector(s => s.auth);
+  const navigation = useNavigation<any>();
   const titleOpacity = useSharedValue(0);
   const titleY = useSharedValue(8);
   const formOpacity = useSharedValue(0);
   const formY = useSharedValue(8);
 
   useEffect(() => {
+    console.log('[LoginScreen] Mount');
     titleOpacity.value = withDelay(120, withTiming(1, {duration: 360}));
     titleY.value = withDelay(120, withTiming(0, {duration: 360, easing: Easing.out(Easing.cubic)}));
     formOpacity.value = withDelay(260, withTiming(1, {duration: 360}));
@@ -41,10 +47,28 @@ export default function BrandScreen() {
   const [password, setPassword] = useState('');
   const [rowWidthMeasured, setRowWidthMeasured] = useState(0);
 
+  useEffect(() => {
+    if (auth.status === 'succeeded') {
+      navigation.reset({
+        index: 0,
+        routes: [{name: 'Home'}],
+      });
+    }
+  }, [auth.status, navigation]);
+
+  const onLogin = () => {
+    console.log('[LoginScreen] onLogin pressed', {
+      email,
+      passwordLength: password.length,
+    });
+    dispatch(login({email, password}));
+  };
+
   return (
-    <SafeAreaView style={{flex: 1, backgroundColor: BLUE}}>
+    <SafeAreaView style={{flex: 1, backgroundColor: PRIMARY}}>
       <KeyboardAvoidingView behavior={Platform.select({ios: 'padding', android: undefined})} style={styles.container}>
         {/* Decorative background blocks to match intro look */}
+        <View style={styles.glossOverlay} />
         <View style={styles.bgBlockTL} />
         <View style={styles.bgBlockTR} />
         <View style={styles.bgBlockBL} />
@@ -101,8 +125,19 @@ export default function BrandScreen() {
               <Text style={styles.forgotText}>Forgot your password ?</Text>
             </Pressable>
 
-            <Pressable style={styles.loginBtn} onPress={() => {}}>
-              <Text style={styles.loginText}>Log in</Text>
+            {auth.status === 'failed' && auth.error ? (
+              <Text style={styles.errorText}>{auth.error}</Text>
+            ) : null}
+
+            <Pressable
+              style={[styles.loginBtn, auth.status === 'loading' && {opacity: 0.6}]}
+              // Avoid disabling during an active press to prevent RN warning
+              onPress={() => {
+                if (auth.status === 'loading') return;
+                onLogin();
+              }}
+            >
+              <Text style={styles.loginText}>{auth.status === 'loading' ? 'Logging in…' : 'Log in'}</Text>
             </Pressable>
           </Animated.View>
         </View>
@@ -112,7 +147,7 @@ export default function BrandScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {flex: 1, backgroundColor: BLUE, justifyContent: 'center', paddingHorizontal: 24},
+  container: {flex: 1, backgroundColor: PRIMARY, justifyContent: 'center', paddingHorizontal: 24},
   center: {flex: 1, justifyContent: 'center'},
   rowWrap: {alignItems: 'center'},
   rowContainer: {alignSelf: 'center', alignItems: 'flex-start'},
@@ -125,17 +160,26 @@ const styles = StyleSheet.create({
   // Form styles
   formWrap: {width: '100%', marginTop: 18},
   label: {color: '#ffffff', fontSize: 12, marginBottom: 6},
-  input: {backgroundColor: '#ffffff', borderRadius: 6, height: 44, paddingHorizontal: 12, borderWidth: 0},
+  input: {
+    backgroundColor: '#ffffff',
+    borderRadius: 6,
+    height: 44,
+    paddingHorizontal: 12,
+    borderWidth: 0,
+    color: '#111827',
+  },
   forgotBtn: {alignSelf: 'flex-end', paddingVertical: 10},
-  forgotText: {color: '#e2f3ff', fontSize: 12, fontWeight: '600'},
-  loginBtn: {marginTop: 10, height: 48, borderRadius: 6, alignItems: 'center', justifyContent: 'center', backgroundColor: '#0b5ea8'},
+  forgotText: {color: 'rgba(255,255,255,0.78)', fontSize: 12, fontWeight: '600'},
+  loginBtn: {marginTop: 10, height: 48, borderRadius: 999, alignItems: 'center', justifyContent: 'center', backgroundColor: PRIMARY_DARK, shadowColor: '#000', shadowOpacity: 0.25, shadowOffset: {width: 0, height: 8}, shadowRadius: 16, elevation: 4},
   loginText: {color: '#ffffff', fontSize: 16, fontWeight: '700'},
-  bgBlockTL: {position: 'absolute', top: 40, left: -10, width: 90, height: 90, backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 8},
-  bgBlockTR: {position: 'absolute', top: 120, right: -20, width: 70, height: 70, backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 8},
-  bgBlockBL: {position: 'absolute', bottom: 40, left: -16, width: 130, height: 130, backgroundColor: 'rgba(0,0,0,0.07)', borderRadius: 16},
+  errorText: {color: '#ffebee', backgroundColor: '#b91c1c', padding: 8, borderRadius: 6, marginTop: 8},
+  glossOverlay: {position: 'absolute', top: 0, left: 0, right: 0, height: '32%', backgroundColor: 'rgba(255,255,255,0.06)'},
+  bgBlockTL: {position: 'absolute', top: 40, left: -10, width: 90, height: 90, backgroundColor: 'rgba(255,255,255,0.16)', borderRadius: 8},
+  bgBlockTR: {position: 'absolute', top: 120, right: -20, width: 70, height: 70, backgroundColor: 'rgba(255,255,255,0.16)', borderRadius: 8},
+  bgBlockBL: {position: 'absolute', bottom: 40, left: -16, width: 130, height: 130, backgroundColor: 'rgba(0,0,0,0.12)', borderRadius: 16},
   bigWheelShadow: {position: 'absolute', bottom: -40, right: -50, width: 260, height: 260, borderRadius: 130, borderWidth: 16, borderColor: 'rgba(0,0,0,0.10)'},
 });
 
 // Inform the navigator which elements are shared
 // @ts-expect-error static property used by react-navigation-shared-element
-BrandScreen.sharedElements = () => [{id: 'brand-logo'}, {id: 'brand-underline'}];
+LoginScreen.sharedElements = () => [{id: 'brand-logo'}, {id: 'brand-underline'}];

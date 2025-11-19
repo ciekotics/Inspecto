@@ -3,6 +3,7 @@ import {useWindowDimensions, View, StyleSheet, SafeAreaView, Image, Pressable} f
 import Animated, {Easing, useAnimatedStyle, useSharedValue, withRepeat, withSequence, withTiming} from 'react-native-reanimated';
 import {SharedElement} from 'react-navigation-shared-element';
 import {useNavigation} from '@react-navigation/native';
+import {PRIMARY} from '../utils/theme';
 
 function AnimatedLoginScreen() {
   const {width, height} = useWindowDimensions();
@@ -36,9 +37,9 @@ function AnimatedLoginScreen() {
       false,
     );
 
-    // Transition to brand screen shortly after intro starts; tap also skips
+    // Transition to login screen shortly after intro starts; tap also skips
     const id = setTimeout(() => {
-      try { navigation.navigate('Brand'); } catch {}
+      try { navigation.navigate('Login'); } catch {}
     }, 1600);
 
     return () => clearTimeout(id);
@@ -67,16 +68,17 @@ function AnimatedLoginScreen() {
   const carTop = ROAD_TOP - targetCarHeight + CAR_BASELINE_ADJUST;
 
   return (
-    <SafeAreaView style={{flex: 1, backgroundColor: BLUE}}>
+    <SafeAreaView style={{flex: 1, backgroundColor: PRIMARY}}>
       <View style={[styles.container, {minHeight: height}]}> 
         {/* Decorative background blocks */}
+        <View style={styles.glossOverlay} />
         <View style={styles.bgBlockTL} />
         <View style={styles.bgBlockTR} />
         <View style={styles.bgBlockBL} />
         <View style={styles.bigWheelShadow} />
 
         {/* Centered car running on a road */}
-        <Pressable style={styles.stageCenter} onPress={() => navigation.navigate('Brand')}>
+        <Pressable style={styles.stageCenter} onPress={() => navigation.navigate('Login')}>
           {/* Road and car are laid out within a centered host to avoid
               any parent width ambiguities across devices. */}
           <View style={[styles.roadHost, {left: PAD, right: PAD, top: ROAD_TOP}]}> 
@@ -111,14 +113,20 @@ function AnimatedLoginScreen() {
   );
 }
 
-const BLUE = '#0ea5e9';
-
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: BLUE,
+    backgroundColor: PRIMARY,
     paddingHorizontal: 24,
     justifyContent: 'center',
+  },
+  glossOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: '36%',
+    backgroundColor: 'rgba(255,255,255,0.06)',
   },
   stageCenter: {alignItems: 'center', justifyContent: 'center', height: 260},
   roadHost: {position: 'absolute'},
@@ -136,7 +144,7 @@ const styles = StyleSheet.create({
     left: -10,
     width: 90,
     height: 90,
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: 'rgba(255,255,255,0.16)',
     borderRadius: 8,
   },
   bgBlockTR: {
@@ -145,7 +153,7 @@ const styles = StyleSheet.create({
     right: -20,
     width: 70,
     height: 70,
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: 'rgba(255,255,255,0.16)',
     borderRadius: 8,
   },
   bgBlockBL: {
@@ -154,7 +162,7 @@ const styles = StyleSheet.create({
     left: -16,
     width: 130,
     height: 130,
-    backgroundColor: 'rgba(0,0,0,0.07)',
+    backgroundColor: 'rgba(0,0,0,0.12)',
     borderRadius: 16,
   },
   bigWheelShadow: {
