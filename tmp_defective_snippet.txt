@@ -1,0 +1,15 @@
+          android_ripple={{color: 'rgba(0,0,0,0.08)'}}>
+          <ChevronLeft size={18} color="#111827" strokeWidth={2.3} />
+        </Pressable>
+        <Text style={styles.headerTitle}>Defective parts</Text>
+        <Pressable style={styles.resetBtn} onPress={resetAll}>
+          <Text style={styles.resetText}>Reset</Text>
+        </Pressable>
+      </View>
+
+      <View style={styles.progressWrap}>
+        <View style={styles.progressRow}>
+          <Text style={styles.progressLabel}>Step 10 · Defective parts</Text>
+          <Text style={styles.progressValue}>
+            {filledCount}/{requiredCount}
+          </Text>

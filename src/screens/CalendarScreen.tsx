@@ -16,10 +16,11 @@ import {client} from '../utils/apiClient';
 import {useAppDispatch, useAppSelector} from '../store/hooks';
 import {setCalendarSlots} from '../store/slices/calendarSlotsSlice';
 
-type CalendarSlotStatus = string;
+type CalendarSlotStatus = 'Booked' | 'Unassigned';
 
 type CalendarSlot = {
   id: string;
+  sellCarId?: string;
   time: string;
   title: string;
   inspectorName: string | null;
@@ -86,10 +87,16 @@ export default function CalendarScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [detailVisible, setDetailVisible] = useState(false);
+  const [detailSlot, setDetailSlot] = useState<CalendarSlot | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
+  const [detailData, setDetailData] = useState<any | null>(null);
   const auth = useAppSelector(state => state.auth);
   const calendarCache = useAppSelector(state => state.calendarSlots);
   const dispatch = useAppDispatch();
   const monthAnim = React.useRef(new Animated.Value(0)).current;
+  const detailAnim = React.useRef(new Animated.Value(0)).current;
 
   const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -227,24 +234,33 @@ export default function CalendarScreen() {
         }
 
         const mapped: CalendarSlot[] = visibleSlots.map(slot => {
-          const vehicle = slot.vehicleDetails || {};
-          const titleParts = [
-            vehicle.brand,
-            vehicle.model,
-            vehicle.variant,
-          ]
-            .filter(Boolean)
-            .join(' ');
-          const inspectorRaw = String(slot?.inspector || '').trim();
+      const vehicle = slot.vehicleDetails || {};
+      const titleParts = [
+        vehicle.brand,
+        vehicle.model,
+        vehicle.variant,
+      ]
+        .filter(Boolean)
+        .join(' ');
+      const inspectorRaw = String(slot?.inspector || '').trim();
+      const inspectorNorm = normalizeName(inspectorRaw || '');
+      const isAssigned =
+        !!inspectorRaw && inspectorNorm !== 'NOT ASSIGNED';
+      const status: CalendarSlotStatus = isAssigned
+        ? 'Booked'
+        : 'Unassigned';
+      const sellCarId =
+        slot.sellCarId != null ? slot.sellCarId : slot.id;
 
-          return {
-            id: String(slot.id ?? slot.sellCarId ?? ''),
-            time: extractStartTime(
-              typeof slot.time === 'string' ? slot.time : undefined,
-            ),
-            title: titleParts || 'Inspection',
-            inspectorName: inspectorRaw || null,
-            status: String(slot.currentStatus || 'BOOKED'),
+      return {
+        id: String(slot.id ?? slot.sellCarId ?? ''),
+        sellCarId: sellCarId != null ? String(sellCarId) : undefined,
+        time: extractStartTime(
+          typeof slot.time === 'string' ? slot.time : undefined,
+        ),
+        title: titleParts || 'Inspection',
+        inspectorName: inspectorRaw || null,
+            status,
             date: String(slot.date || ''),
           };
         });
@@ -354,6 +370,213 @@ export default function CalendarScreen() {
     selectedDay === TODAY_DAY &&
     currentMonth === TODAY_MONTH &&
     currentYear === TODAY_YEAR;
+
+  const closeDetail = () => {
+    Animated.timing(detailAnim, {
+      toValue: 0,
+      duration: 140,
+      useNativeDriver: true,
+    }).start(() => {
+      setDetailVisible(false);
+      setDetailSlot(null);
+      setDetailData(null);
+      setDetailError(null);
+    });
+  };
+
+  const openDetail = async (slot: CalendarSlot) => {
+    setDetailSlot(slot);
+    setDetailVisible(true);
+    setDetailLoading(true);
+    setDetailError(null);
+    setDetailData(null);
+    detailAnim.setValue(0);
+    Animated.spring(detailAnim, {
+      toValue: 1,
+      useNativeDriver: true,
+      friction: 6,
+      tension: 80,
+    }).start();
+
+    try {
+      const payloadId =
+        (slot.sellCarId && (Number(slot.sellCarId) || slot.sellCarId)) ||
+        Number(slot.id) ||
+        slot.id;
+      const res = await client.get('/api/view-sell-car', {
+        params: {id: payloadId},
+      });
+      const data = res.data?.data || res.data || {};
+      const car =
+        (Array.isArray(data?.AllSellCars) && data.AllSellCars[0]) ||
+        data.AllSellCars ||
+        data;
+      const vehicle = car?.vehicle || car?.vehicleDetails || {};
+
+      const brandName =
+        vehicle.brand?.display_name ||
+        vehicle.brand?.name ||
+        vehicle.brand ||
+        '';
+      const modelName =
+        vehicle.model?.display_name ||
+        vehicle.model?.name ||
+        vehicle.model ||
+        '';
+      const variantName =
+        vehicle.variant?.name || car?.variant || vehicle.variant || '';
+      const title =
+        [brandName, modelName, variantName].filter(Boolean).join(' ') ||
+        vehicle.name ||
+        slot.title ||
+        'Vehicle';
+      const kms =
+        car?.kmDriven ||
+        vehicle.distanceDriven ||
+        vehicle.kms ||
+        vehicle.kilometers ||
+        vehicle.odometer;
+
+      let description =
+        car?.vehicleInfo ||
+        vehicle.description ||
+        vehicle.notes ||
+        vehicle.userNote ||
+        '';
+      if (!description && car?.remarks && typeof car.remarks === 'object') {
+        // Prefer the most relevant remark; fall back to the first non-empty.
+        const remarkKeys = [
+          'Inspection Slot Booked',
+          'Estimated Valuation Provided',
+        ];
+        let remark = '';
+        for (let i = 0; i < remarkKeys.length; i += 1) {
+          const key = remarkKeys[i];
+          const val = (car.remarks as any)[key];
+          if (val && val.remarks) {
+            remark = val.remarks;
+            break;
+          }
+        }
+        if (!remark) {
+          const allRemarks = Object.entries(car.remarks || {})
+            .map(([key, val]: [string, any]) => {
+              if (val?.remarks) {
+                return `${key}: ${val.remarks}`;
+              }
+              return '';
+            })
+            .filter(Boolean);
+          remark = allRemarks[0] || '';
+        }
+        description = remark || '';
+      }
+
+      if (
+        !description &&
+        car?.remarks &&
+        typeof car.remarks === 'object'
+      ) {
+        const remarkLines = Object.entries(car.remarks || {})
+          .map(([key, val]: [string, any]) => {
+            const text = val?.remarks;
+            if (text) {
+              return `${key}: ${text}`;
+            }
+            return '';
+          })
+          .filter(Boolean);
+        if (remarkLines.length > 0) {
+          description = remarkLines.join('\n');
+        }
+      }
+
+      if (!description) {
+        const statusDescription =
+          car?.currentStatus ||
+          car?.inspectionStatus ||
+          '';
+        const slotDescription = [
+          car?.slotDate ? `Date: ${car.slotDate}` : '',
+          car?.slotTime ? `Time: ${car.slotTime}` : '',
+        ]
+          .filter(Boolean)
+          .join(' • ');
+        description = [statusDescription, slotDescription]
+          .filter(Boolean)
+          .join(' • ');
+      }
+
+      setDetailData({
+        title,
+        brand: brandName,
+        model: modelName,
+        variant: variantName,
+        customerMobile: car?.customer?.mobile || '',
+        fuel:
+          car?.fuelType ||
+          vehicle.fuelType ||
+          vehicle.fuel ||
+          vehicle.fuel_type ||
+          vehicle.fueltype ||
+          '',
+        transmission:
+          car?.transmission || vehicle.transmission || vehicle.gearbox || '',
+        year:
+          car?.manufacturingYear ||
+          vehicle.make_year ||
+          vehicle.year ||
+          vehicle.manufactureYear ||
+          vehicle.mfgYear ||
+          '',
+        kms: kms ? String(kms) : '',
+        city: car?.currentCity || vehicle.city || '',
+        state: car?.state || vehicle.state || '',
+        regNumber:
+          car?.registrationNumber || car?.rto || vehicle.regNumber || '',
+        rto: car?.rto || '',
+        ownership: car?.ownerShip || '',
+        whenSell: car?.whenWantToSell || '',
+        estimatedValue: car?.estimatedValue || '',
+        inspectorName:
+          car?.inspectedBy?.name || detailSlot?.inspectorName || null,
+        address: car?.address || '',
+        vehicleInfo: car?.vehicleInfo || '',
+        vehicleYears: Array.isArray(vehicle?.years)
+          ? vehicle.years.join(', ')
+          : '',
+        currentStatus:
+          car?.currentStatus || car?.inspectionStatus || car?.status || '',
+        currentRemark: (() => {
+          const remarksObj: Record<string, {remarks?: string}> =
+            car?.remarks || {};
+          const currentKeyRaw =
+            (car?.currentStatus || car?.inspectionStatus || '') as string;
+          const currentKeyNorm = currentKeyRaw.toLowerCase();
+          const match = Object.entries(remarksObj).find(
+            ([key, val]: [string, any]) =>
+              key.toLowerCase() === currentKeyNorm && val?.remarks,
+          );
+          if (match && match[1]?.remarks) {
+            return match[1].remarks as string;
+          }
+          const firstNonEmpty = Object.values(remarksObj).find(
+            (val: any) => val?.remarks,
+          ) as any;
+          return (firstNonEmpty?.remarks as string) || '';
+        })(),
+        description,
+      });
+    } catch (err: any) {
+      const msg =
+        err?.response?.data?.message ||
+        err?.message ||
+        'Failed to load vehicle details';
+      setDetailError(msg);
+    } finally {
+      setDetailLoading(false);
+    }
+  };
 
   return (
     <SafeAreaView style={styles.root}>
@@ -617,32 +840,267 @@ export default function CalendarScreen() {
               No inspections for this date.
             </Text>
           ) : (
-            slotsForSelectedDay.map(slot => (
-              <View key={slot.id} style={styles.card}>
-                <View style={styles.timePill}>
-                  <Text style={styles.timeText}>{slot.time}</Text>
-                </View>
-                <View style={styles.cardBody}>
-                  <View style={styles.cardHeaderRow}>
-                    <Text style={styles.cardTitle}>{slot.title}</Text>
-                    <View style={styles.statusPill}>
-                      <Text style={styles.statusText}>{slot.status}</Text>
-                    </View>
+            slotsForSelectedDay.map((slot, index) => {
+              const isBooked = slot.status === 'Booked';
+              const key = `${slot.id}-${slot.date}-${slot.time}-${index}`;
+              return (
+                <Pressable
+                  key={key}
+                  style={styles.card}
+                  onPress={() => openDetail(slot)}>
+                  <View style={styles.timePill}>
+                    <Text style={styles.timeText}>{slot.time}</Text>
                   </View>
-                  <Text style={styles.operatorText}>
-                    {slot.inspectorName
-                      ? `Inspector: ${slot.inspectorName}`
-                      : 'Inspector: Not assigned'}
-                  </Text>
-                  <Text style={styles.secondaryText}>
-                    Tap a date above to change the inspection focus.
-                  </Text>
-                </View>
-              </View>
-            ))
+                  <View style={styles.cardBody}>
+                    <View style={styles.cardHeaderRow}>
+                      <Text style={styles.cardTitle}>{slot.title}</Text>
+                      <View
+                        style={[
+                          styles.statusPill,
+                          isBooked
+                            ? styles.statusPillBooked
+                            : styles.statusPillUnassigned,
+                        ]}>
+                        <Text
+                          style={[
+                            styles.statusText,
+                            isBooked
+                              ? styles.statusTextBooked
+                              : styles.statusTextUnassigned,
+                          ]}>
+                          {slot.status}
+                        </Text>
+                      </View>
+                    </View>
+                    <Text style={styles.operatorText}>
+                      {slot.inspectorName
+                        ? `Inspector: ${slot.inspectorName}`
+                        : 'Inspector: Not assigned'}
+                    </Text>
+                    <Text style={styles.secondaryText}>
+                      Tap a date above to change the inspection focus.
+                    </Text>
+                  </View>
+                </Pressable>
+              );
+            })
           )}
         </ScrollView>
       </View>
+
+      {detailVisible && (
+        <View style={styles.detailOverlay}>
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={closeDetail}
+            android_ripple={{color: 'transparent'}}
+          />
+          <View style={styles.detailOverlayContent}>
+            <Animated.View
+              style={[
+                styles.detailScreen,
+                {
+                  opacity: detailAnim,
+                  transform: [
+                    {
+                      scale: detailAnim.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [0.94, 1],
+                      }),
+                    },
+                  ],
+                },
+              ]}>
+              <ScrollView
+                style={{flex: 1}}
+                contentContainerStyle={styles.detailContent}
+                showsVerticalScrollIndicator>
+                <View style={styles.detailHeaderRow}>
+                  <View style={{flex: 1, paddingRight: 10}}>
+                    <Text style={styles.detailTitle}>
+                      {detailData?.title ||
+                        detailSlot?.title ||
+                        'Vehicle details'}
+                    </Text>
+                    <View style={styles.detailHeaderSubRow}>
+                      {detailSlot?.time ? (
+                        <Text style={styles.detailSubTitle}>
+                          {detailSlot.time} •{' '}
+                          {detailSlot.status === 'Booked'
+                            ? 'Booked'
+                            : 'Unassigned'}
+                        </Text>
+                      ) : null}
+                      {detailData?.currentStatus ? (
+                        <Text style={styles.detailStatusText}>
+                          {detailData.currentStatus}
+                        </Text>
+                      ) : null}
+                    </View>
+                    {detailData?.customerMobile ? (
+                      <Text style={styles.detailMobile}>
+                        {detailData.customerMobile}
+                      </Text>
+                    ) : null}
+                    {detailData?.variant ? (
+                      <View style={styles.detailVariantPill}>
+                        <Text style={styles.detailVariantText}>
+                          {detailData.variant}
+                        </Text>
+                      </View>
+                    ) : null}
+                  </View>
+                  <Pressable onPress={closeDetail} hitSlop={12}>
+                    <Text style={styles.detailClose}>X</Text>
+                  </Pressable>
+                </View>
+
+                {detailLoading ? (
+                  <View style={styles.detailSkeleton}>
+                    <View style={styles.skeletonLineWide} />
+                    <View style={styles.skeletonLine} />
+                    <View style={styles.skeletonLineSmall} />
+                  </View>
+                ) : detailError ? (
+                  <Text style={styles.detailError}>{detailError}</Text>
+                ) : (
+                  <>
+                    <View style={styles.detailMetaRow}>
+                      <View style={styles.detailChip}>
+                        <Text style={styles.detailChipLabel}>Inspector</Text>
+                        <Text style={styles.detailChipValue}>
+                          {detailData?.inspectorName ||
+                            detailSlot?.inspectorName ||
+                            'Not assigned'}
+                        </Text>
+                      </View>
+                      {detailData?.rto ? (
+                        <View style={styles.detailChip}>
+                          <Text style={styles.detailChipLabel}>RTO</Text>
+                          <Text style={styles.detailChipValue}>
+                            {detailData.rto}
+                          </Text>
+                        </View>
+                      ) : null}
+                    </View>
+
+                    <View style={styles.detailMetaRow}>
+                      {detailData?.ownership ? (
+                        <View style={styles.detailChip}>
+                          <Text style={styles.detailChipLabel}>Ownership</Text>
+                          <Text style={styles.detailChipValue}>
+                            {detailData.ownership}
+                          </Text>
+                        </View>
+                      ) : null}
+                      {detailData?.fuel ? (
+                        <View style={styles.detailChip}>
+                          <Text style={styles.detailChipLabel}>Fuel</Text>
+                          <Text style={styles.detailChipValue}>
+                            {detailData.fuel}
+                          </Text>
+                        </View>
+                      ) : null}
+                    </View>
+
+                    <View style={styles.detailMetaRow}>
+                      {detailData?.transmission ? (
+                        <View style={styles.detailChip}>
+                          <Text style={styles.detailChipLabel}>Transmission</Text>
+                          <Text style={styles.detailChipValue}>
+                            {detailData.transmission}
+                          </Text>
+                        </View>
+                      ) : null}
+                      {detailData?.year ? (
+                        <View style={styles.detailChip}>
+                          <Text style={styles.detailChipLabel}>Year</Text>
+                          <Text style={styles.detailChipValue}>
+                            {detailData.year}
+                          </Text>
+                        </View>
+                      ) : null}
+                    </View>
+
+                    <View style={styles.detailMetaRow}>
+                      {detailData?.kms ? (
+                        <View style={styles.detailChip}>
+                          <Text style={styles.detailChipLabel}>Kms</Text>
+                          <Text style={styles.detailChipValue}>
+                            {detailData.kms}
+                          </Text>
+                        </View>
+                      ) : null}
+                    </View>
+
+                    {(detailData?.city || detailData?.state) && (
+                      <View style={styles.detailMetaRow}>
+                        <View style={[styles.detailChip, {flex: 1}]}>
+                          <Text style={styles.detailChipLabel}>Location</Text>
+                          <Text style={styles.detailChipValue}>
+                            {[detailData?.city, detailData?.state]
+                              .filter(Boolean)
+                              .join(', ')}
+                          </Text>
+                        </View>
+                      </View>
+                    )}
+
+                    {detailData?.address ? (
+                      <View style={styles.detailMetaRow}>
+                        <View style={[styles.detailChip, {flex: 1}]}> 
+                          <Text style={styles.detailChipLabel}>Address</Text>
+                          <Text style={styles.detailChipValue}>
+                            {detailData.address}
+                          </Text>
+                        </View>
+                      </View>
+                  ) : null}
+
+                    {detailData?.currentRemark ? (
+                      <View style={styles.detailRemarksBlock}>
+                        <Text style={styles.detailRemarksTitle}>Remark</Text>
+                        <View style={styles.remarkRow}>
+                          <View style={styles.remarkDot} />
+                          <Text style={styles.remarkText}>
+                            {detailData.currentRemark}
+                          </Text>
+                        </View>
+                      </View>
+                    ) : null}
+
+                    <View style={styles.detailButtonRow}>
+                      <Pressable
+                        style={styles.detailButton}
+                        onPress={closeDetail}
+                        android_ripple={{color: 'rgba(0,0,0,0.08)'}}>
+                        <Text style={styles.detailButtonText}>Close</Text>
+                      </Pressable>
+                      <Pressable
+                        style={[styles.detailButton, styles.detailButtonPrimary]}
+                        onPress={() => {
+                          const targetId =
+                            detailSlot?.sellCarId || detailSlot?.id;
+                          closeDetail();
+                          if (targetId) {
+                            navigation.navigate('Inspection', {
+                              sellCarId: targetId,
+                            });
+                          }
+                        }}
+                        android_ripple={{color: 'rgba(255,255,255,0.12)'}}>
+                        <Text style={styles.detailButtonTextPrimary}>
+                          Begin inspection
+                        </Text>
+                      </Pressable>
+                    </View>
+                  </>
+                )}
+              </ScrollView>
+            </Animated.View>
+          </View>
+        </View>
+      )}
     </SafeAreaView>
   );
 }
@@ -767,9 +1225,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   datePill: {
-    minWidth: 30,
-    height: 30,
-    borderRadius: 15,
+    width: 30,
+    aspectRatio: 1,
+    borderRadius: 999,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -892,6 +1350,18 @@ const styles = StyleSheet.create({
     color: PRIMARY,
     fontWeight: '600',
   },
+  statusPillBooked: {
+    backgroundColor: '#16a34a',
+  },
+  statusPillUnassigned: {
+    backgroundColor: '#9ca3af',
+  },
+  statusTextBooked: {
+    color: '#ffffff',
+  },
+  statusTextUnassigned: {
+    color: '#ffffff',
+  },
   operatorText: {
     marginTop: 6,
     fontSize: 12,
@@ -923,4 +1393,178 @@ const styles = StyleSheet.create({
     marginTop: 6,
     marginRight: 80,
   },
+  detailOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.3)',
+    paddingTop: 12,
+  },
+  detailOverlayContent: {
+    flex: 1,
+  },
+  detailScreen: {
+    flex: 1,
+    backgroundColor: '#ffffff',
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOpacity: 0.12,
+    shadowOffset: {width: 0, height: 8},
+    shadowRadius: 20,
+    elevation: 8,
+  },
+  detailContent: {
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    paddingBottom: 20,
+  },
+  detailHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  detailTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  detailSubTitle: {
+    marginTop: 2,
+    fontSize: 12,
+    color: '#6b7280',
+  },
+  detailHeaderSubRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 2,
+  },
+  detailStatusText: {
+    fontSize: 11,
+    color: '#9ca3af',
+    marginLeft: 8,
+  },
+  detailMobile: {
+    marginTop: 6,
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  detailVariantPill: {
+    alignSelf: 'flex-start',
+    marginTop: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: '#f3f4f6',
+  },
+  detailVariantText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#374151',
+  },
+  detailClose: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#6b7280',
+  },
+  detailMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 6,
+    flexWrap: 'wrap',
+    marginHorizontal: -4,
+  },
+  detailChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 10,
+    backgroundColor: '#f3f4f6',
+    minWidth: 130,
+    marginHorizontal: 4,
+    marginVertical: 4,
+  },
+  detailChipLabel: {
+    fontSize: 11,
+    color: '#6b7280',
+    marginBottom: 2,
+  },
+  detailChipValue: {
+    fontSize: 13,
+    color: '#111827',
+    fontWeight: '600',
+  },
+  detailError: {
+    fontSize: 13,
+    color: '#b91c1c',
+    marginTop: 4,
+  },
+  detailSkeleton: {
+    marginTop: 6,
+  },
+  detailButtonRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 14,
+  },
+  detailButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 12,
+    backgroundColor: '#e5e7eb',
+    alignItems: 'center',
+    marginRight: 10,
+  },
+  detailButtonPrimary: {
+    marginRight: 0,
+    backgroundColor: PRIMARY,
+  },
+  detailButtonText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  detailButtonTextPrimary: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
+  detailRemarksBlock: {
+    marginTop: 12,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: '#f9fafb',
+  },
+  detailRemarksTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#111827',
+    marginBottom: 8,
+  },
+  remarkRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginTop: 6,
+  },
+  remarkDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginTop: 5,
+    marginRight: 8,
+    backgroundColor: PRIMARY,
+  },
+  remarkLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  remarkText: {
+    fontSize: 12,
+    color: '#374151',
+    marginTop: 2,
+    lineHeight: 16,
+  },
 });
+
+

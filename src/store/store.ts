@@ -41,7 +41,7 @@ const persistedReducer = persistReducer(rootPersistConfig, rootReducer);
 export const store = configureStore({
   reducer: persistedReducer,
   middleware: getDefault =>
-    getDefault({serializableCheck: false}), // MMKV/raw data are strings only
+    getDefault({serializableCheck: false, immutableCheck: false}), // MMKV/raw data are strings only
 });
 
 export const persistor = persistStore(store);
