@@ -26,6 +26,7 @@ import {
 import {PRIMARY} from '../utils/theme';
 import {client} from '../utils/apiClient';
 import {FramesInspection, InspectionApiResponse} from '../types/inspection';
+import {store} from '../store/store';
 
 type RouteParams = {
   sellCarId?: string | number;
@@ -40,6 +41,7 @@ const FramesInspectionScreen = () => {
   const formattedSellCarId =
     sellCarId == null ? '' : String(sellCarId).trim();
 
+  const [inspectionId, setInspectionId] = useState<string | number>('');
   const [front, setFront] = useState({
     bonnetSupport: '' as YesNo,
     crossMember: '' as YesNo,
@@ -95,6 +97,8 @@ const FramesInspectionScreen = () => {
   const lastScale = useRef(1);
   const combinedScale = Animated.multiply(baseScale, pinchScale);
   const doubleTapRef = useRef<TapGestureHandler | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
   const requiredCount = useMemo(() => 16, []);
 
@@ -453,8 +457,12 @@ const FramesInspectionScreen = () => {
           params: {sellCarId: formattedSellCarId},
         });
         if (cancelled) return;
+        const existing = res.data?.data?.allInspections?.[0];
+        if (existing?.id != null) {
+          setInspectionId(existing.id);
+        }
         const frames =
-          res.data?.data?.allInspections?.[0]?.frames ||
+          existing?.frames ||
           res.data?.data?.frames ||
           res.data?.frames;
         applyFrames(frames);
@@ -469,6 +477,177 @@ const FramesInspectionScreen = () => {
       cancelled = true;
     };
   }, [formattedSellCarId]);
+
+  const appendFileToFormData = async (
+    fd: FormData,
+    fieldName: string,
+    uri: string,
+  ) => {
+    const ext = uri.split('.').pop() || 'jpg';
+    const mime =
+      ext === 'png'
+        ? 'image/png'
+        : ext === 'jpeg' || ext === 'jpg'
+        ? 'image/jpeg'
+        : 'application/octet-stream';
+    const isRemote = uri.startsWith('http://') || uri.startsWith('https://');
+    if (isRemote) {
+      const res = await fetch(uri);
+      const blob = await res.blob();
+      const typedBlob =
+        blob.type && blob.type.length > 0
+          ? blob
+          : new Blob([blob], {type: mime || 'application/octet-stream'});
+      (typedBlob as any).name = `${fieldName}.${ext}`;
+      fd.append(fieldName, typedBlob as any);
+    } else {
+      const normalizedUri =
+        uri.startsWith('file://') || uri.startsWith('content://') ? uri : uri;
+      fd.append(fieldName, {
+        uri: normalizedUri,
+        name: `${fieldName}.${ext}`,
+        type: mime,
+      } as any);
+    }
+  };
+
+  const handleSubmit = async () => {
+    setMessage(null);
+    if (!formattedSellCarId) {
+      setMessage('Missing sellCarId.');
+      return;
+    }
+    const requiredFront = Object.entries(front).find(([, v]) => !v);
+    if (requiredFront) {
+      setMessage(`Select ${requiredFront[0].replace(/([A-Z])/g, ' $1')}`);
+      return;
+    }
+    const requiredPillar = Object.entries(pillars).find(([, v]) => !v);
+    if (requiredPillar) {
+      setMessage(`Select ${requiredPillar[0].replace(/([A-Z])/g, ' $1')}`);
+      return;
+    }
+    const requiredRear = Object.entries(rear).find(([, v]) => !v);
+    if (requiredRear) {
+      setMessage(`Select ${requiredRear[0].replace(/([A-Z])/g, ' $1')}`);
+      return;
+    }
+    const pillarDetailMissing = (['leftB', 'leftC', 'rightB'] as (keyof typeof pillars)[]).find(
+      key => pillars[key] === 'Yes' && !pillarCondition[key],
+    );
+    if (pillarDetailMissing) {
+      setMessage('Select condition for pillars marked Yes.');
+      return;
+    }
+    const rearDetailMissing = (['rearLeftQuarter', 'rearRightQuarter', 'dickey'] as (keyof typeof rear)[]).find(
+      key => rear[key] === 'Yes' && !rearCondition[key],
+    );
+    if (rearDetailMissing) {
+      setMessage('Select condition for rear items marked Yes.');
+      return;
+    }
+    if (!floodAffected) {
+      setMessage('Select Flood Affected Vehicle.');
+      return;
+    }
+    if (!frameImages.filter(Boolean).length) {
+      setMessage('Add at least one frame image.');
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const pillarReports: any = {
+        'Left A-Pillar': pillars.leftA,
+        'Left B-Pillar': pillars.leftB,
+        'Left C-Pillar': pillars.leftC,
+        'Right A-Pillar': pillars.rightA,
+        'Right B-Pillar': pillars.rightB,
+        'Right C-Pillar': pillars.rightC,
+      };
+      // Only include detail keys when pillar is Yes to avoid validation on empty values.
+      if (pillars.leftB === 'Yes') {
+        pillarReports['Left B-Pillar Details'] = pillarCondition.leftB || 'Already Repaired';
+      }
+      if (pillars.leftC === 'Yes') {
+        pillarReports['Left C-Pillar Details'] = pillarCondition.leftC || 'Already Repaired';
+      }
+      if (pillars.rightB === 'Yes') {
+        pillarReports['Right B-Pillar Details'] = pillarCondition.rightB || 'Already Repaired';
+      }
+
+      const rearReports: any = {
+        'Rear Left Quarter Panel': rear.rearLeftQuarter,
+        'Rear Right Quarter Panel': rear.rearRightQuarter,
+        Dickey: rear.dickey,
+      };
+      if (rear.rearLeftQuarter === 'Yes') {
+        rearReports['Rear Left Quarter Panel Details'] =
+          rearCondition.rearLeftQuarter || 'Already Repaired';
+      }
+      if (rear.rearRightQuarter === 'Yes') {
+        rearReports['Rear Right Quarter Panel Details'] =
+          rearCondition.rearRightQuarter || 'Already Repaired';
+      }
+      if (rear.dickey === 'Yes') {
+        rearReports['Dickey Details'] = rearCondition.dickey || 'Already Repaired';
+      }
+
+      const reports: any = {
+        'Any Damage In': {
+          Front: {
+            'Bonnet Support Member': front.bonnetSupport,
+            'Cross Member': front.crossMember,
+            'Lamp Support': front.lampSupport,
+            'Left Apron': front.leftApron,
+            'Right Apron': front.rightApron,
+          },
+          Pillars: pillarReports,
+          Rear: rearReports,
+        },
+        'Flood Affected Vehicle': floodAffected,
+        'Other Comments': otherComments,
+        'Refurbishment Cost': refurbCost || '0',
+      };
+
+      const fd = new FormData();
+      fd.append('id', String(inspectionId || formattedSellCarId));
+      fd.append('sellCarId', formattedSellCarId);
+      fd.append('Reports', JSON.stringify(reports));
+      fd.append('deletedFiles', JSON.stringify([]));
+      for (let i = 0; i < frameImages.length; i += 1) {
+        const uri = frameImages[i];
+        if (uri) {
+          await appendFileToFormData(fd, `frame${i + 1}`, uri);
+        }
+      }
+
+      const token = store.getState().auth.token;
+      const resp = await fetch(`https://api.marnix.in/api/add-frames-inspection`, {
+        method: 'POST',
+        headers: {
+          Authorization: token ? `Bearer ${token}` : '',
+          Accept: '*/*',
+        },
+        body: fd,
+      });
+      const text = await resp.text();
+      if (!resp.ok) {
+        console.error('[Frames] upload failed', {
+          status: resp.status,
+          statusText: resp.statusText,
+          body: text,
+        });
+        throw new Error(text || 'Failed to save frames inspection');
+      }
+      setMessage(null);
+      navigation.navigate('RefurbishmentCost', {sellCarId: formattedSellCarId});
+    } catch (err: any) {
+      setMessage(err?.message || 'Failed to save frames inspection');
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   return (
     <SafeAreaView style={styles.root}>
@@ -571,11 +750,15 @@ const FramesInspectionScreen = () => {
           </View>
 
           <Pressable
-            style={styles.nextBtn}
-            onPress={() => navigation.goBack()}
+            style={[styles.nextBtn, submitting && {opacity: 0.7}]}
+            onPress={handleSubmit}
+            disabled={submitting}
             android_ripple={{color: 'rgba(255,255,255,0.15)'}}>
-            <Text style={styles.nextLabel}>Next</Text>
+            <Text style={styles.nextLabel}>
+              {submitting ? 'Saving...' : 'Save & Next'}
+            </Text>
           </Pressable>
+          {message ? <Text style={styles.helperText}>{message}</Text> : null}
         </View>
         )}
       </ScrollView>
@@ -921,6 +1104,11 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '700',
     color: '#ffffff',
+  },
+  helperText: {
+    marginTop: 10,
+    fontSize: 12,
+    color: '#b91c1c',
   },
   pickerOverlay: {
     flex: 1,

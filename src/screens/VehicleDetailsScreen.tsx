@@ -251,11 +251,51 @@ const formatDate = (value: string) => {
   return value;
 };
 
+const normalizeFuelValue = (val: string) => {
+  if (!val) return '';
+  const lower = val.trim().toLowerCase();
+  if (lower === 'petrol+cng' || lower === 'petrol + cng') {
+    return 'Petrol + CNG';
+  }
+  if (lower === 'petrol') return 'Petrol';
+  if (lower === 'diesel') return 'Diesel';
+  if (lower === 'hybrid') return 'Hybrid';
+  if (lower === 'electric') return 'Electric';
+  if (lower === 'lpg') return 'LPG';
+  return val;
+};
+
+const normalizeInsuranceTypeValue = (val: string) => {
+  if (!val) return '';
+  const lower = val.trim().toLowerCase();
+  if (lower.includes('third')) return 'Third Party';
+  if (lower.includes('zero')) return 'Zero Depreciation';
+  if (lower.includes('expired')) return 'Insurance Expired';
+  if (lower.includes('comprehensive')) return 'Comprehensive';
+  return val;
+};
+
+const sanitizeEngineInfo = (info: any) => {
+  const next = {...info};
+  if (next['Fuel Type']) {
+    next['Fuel Type'] = normalizeFuelValue(next['Fuel Type']);
+  }
+  if (next['Insurance Type']) {
+    next['Insurance Type'] = normalizeInsuranceTypeValue(next['Insurance Type']);
+  }
+  if (next['Insurance IDV Value'] != null) {
+    const raw = String(next['Insurance IDV Value']).trim();
+    next['Insurance IDV Value'] = /^[0-9.]+$/.test(raw) ? raw : '';
+  }
+  return next;
+};
+
 const VehicleDetailsScreen = () => {
   const navigation = useNavigation<any>();
   const route = useRoute();
   const {sellCarId} = (route.params as RouteParams) || {};
   const online = useAppSelector(state => state.network.isOnline === true);
+  const [inspectionId, setInspectionId] = useState<string | number>('');
   const [form, setForm] = useState<EngineForm>(INITIAL_FORM);
   const [errors, setErrors] = useState<ErrorMap>({});
   const [submitting, setSubmitting] = useState(false);
@@ -393,9 +433,21 @@ const VehicleDetailsScreen = () => {
     const fetchExistingServer = async () => {
       try {
         setRemoteLoading(true);
-        const res = await client.get('/api/view-vehicle-details-inspection', {
-          params: {sellCarId: resolvedSellCarId},
-        });
+        const [inspRes, res] = await Promise.all([
+          client
+            .get('/api/view-inspection', {params: {sellCarId: resolvedSellCarId}})
+            .catch(() => null),
+          client.get('/api/view-vehicle-details-inspection', {
+            params: {sellCarId: resolvedSellCarId},
+          }),
+        ]);
+        const inspId =
+          inspRes?.data?.data?.allInspections?.[0]?.id ||
+          inspRes?.data?.data?.id ||
+          '';
+        if (inspId) {
+          setInspectionId(inspId);
+        }
         const engineInfo =
           res.data?.data?.vehicleDetails?.vehicleDetails?.['Engine Info'] ||
           res.data?.data?.vehicleDetails?.vehicleDetails?.engineInfo ||
@@ -672,6 +724,12 @@ const VehicleDetailsScreen = () => {
     if (!form.insuranceValidUpto) {
       addErr('insuranceValidUpto', 'Required');
     }
+    if (
+      form.insuranceIdvValue &&
+      !/^[0-9.]+$/.test(form.insuranceIdvValue.trim())
+    ) {
+      addErr('insuranceIdvValue', 'Numbers only');
+    }
     if (!form.chassisImageUri) {
       addErr('chassisImageUri', 'Required');
     }
@@ -813,14 +871,14 @@ const VehicleDetailsScreen = () => {
     Emission: form.emission === 'Non-Euro' ? 'Non Euro' : form.emission,
     'Date of Registration': form.dateOfRegistration,
     'Odometer Reading': form.odometerReading,
-    'Fuel Type': form.fuelType === 'Petrol + CNG' ? 'Petrol+CNG' : form.fuelType,
+    'Fuel Type': normalizeFuelValue(form.fuelType),
     'External CNG/LPG Fitment': form.externalFitment,
     'No. of Owners': String(form.owners),
     'Duplicate Key Available': form.duplicateKey,
     'VIN Plate Available': form.vinPlate,
     'Jack & Toolkit Available': form.jackToolkit,
     'Spare Wheel Available': form.spareWheel,
-    'Insurance Type': form.insuranceType,
+    'Insurance Type': normalizeInsuranceTypeValue(form.insuranceType),
     'Insurance image': form.insuranceImageUri ?? '',
     'Insurance Valid Upto': form.insuranceValidUpto,
     'Insurance IDV Value': form.insuranceIdvValue,
@@ -828,8 +886,12 @@ const VehicleDetailsScreen = () => {
 
   const uploadItem = async (item: EngineQueueItem) => {
     const formData = new FormData();
+    const sanitizedInfo = sanitizeEngineInfo(item.payload.engineInfo);
     formData.append('sellCarId', item.sellCarId);
-    formData.append('Engine Info', JSON.stringify(item.payload.engineInfo));
+    if (inspectionId) {
+      formData.append('id', String(inspectionId));
+    }
+    formData.append('Engine Info', JSON.stringify(sanitizedInfo));
 
     const appendFile = (uri: string | null | undefined, name: string) => {
       if (!uri) {
@@ -886,6 +948,7 @@ const VehicleDetailsScreen = () => {
       return;
     }
     setSubmitting(true);
+    let saved = false;
     const engineInfo = toEngineInfoPayload();
     const queueItem: EngineQueueItem = {
       id: nanoid(),
@@ -911,19 +974,30 @@ const VehicleDetailsScreen = () => {
       try {
         await uploadItem(queueItem);
         setMessage('Saved online.');
+        saved = true;
       } catch (err: any) {
         enqueueEngineSync(queueItem);
-        setMessage(
+        const status = err?.response?.status || err?.status;
+        const msg =
           err?.response?.data?.message ||
-            err?.message ||
-            'Saved locally. Will sync when online.',
-        );
+          err?.data?.message ||
+          err?.message ||
+          'Saved locally. Will sync when online.';
+        console.warn('[VehicleDetails] engine upload failed', status, msg, err?.data);
+        setMessage(msg);
+        saved = true;
       }
     } else {
       enqueueEngineSync(queueItem);
       setMessage('Saved locally. Will sync when online.');
+      saved = true;
     }
     setSubmitting(false);
+    if (saved) {
+      navigation.navigate('VehicleDetailsStep1B', {
+        sellCarId: resolvedSellCarId,
+      });
+    }
   };
 
   const renderOptionPills = <T extends string>(
@@ -1075,7 +1149,7 @@ const VehicleDetailsScreen = () => {
 
       <View style={styles.progressWrap}>
         <View style={styles.progressRow}>
-          <Text style={styles.progressLabel}>Step 1 · Vehicle details</Text>
+          <Text style={styles.progressLabel}>Step 1a - Vehicle details</Text>
           <Text style={styles.progressValue}>
             {filledCount}/{requiredFields.length}
           </Text>

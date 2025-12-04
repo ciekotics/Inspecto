@@ -1,4 +1,4 @@
-import React, {useEffect, useState} from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   SafeAreaView,
   View,
@@ -8,8 +8,9 @@ import {
   ScrollView,
   ActivityIndicator,
   RefreshControl,
+  TextInput,
 } from 'react-native';
-import {useNavigation, useRoute} from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import {
   ChevronLeft,
   Car,
@@ -21,35 +22,38 @@ import {
   Settings,
   BadgeIndianRupee,
   AlertTriangle,
+  Star,
+  Check,
+  FileText,
 } from 'lucide-react-native';
-import {PRIMARY} from '../utils/theme';
-import {client} from '../utils/apiClient';
-import {loadDraft} from '../utils/draftStorage';
+import { PRIMARY } from '../utils/theme';
+import { client } from '../utils/apiClient';
+import { loadDraft } from '../utils/draftStorage';
 
 type RouteParams = {
   sellCarId?: string | number;
 };
 
 const modules = [
-  {key: 'vehicleDetails', label: 'Vehicle Details', icon: Car, enabled: true},
-  {key: 'exterior', label: 'Exterior', icon: DoorClosed, enabled: true},
+  { key: 'vehicleDetails', label: 'Vehicle Details', icon: Car, enabled: true },
+  { key: 'exterior', label: 'Exterior', icon: DoorClosed, enabled: true },
   {
     key: 'electrical',
     label: 'Electrical + Interior',
     icon: Cpu,
     enabled: true,
   },
-  {key: 'testDrive', label: 'Test Drive', icon: Gauge, enabled: true},
-  {key: 'engine', label: 'Engine', icon: Wrench, enabled: true},
-  {key: 'functions', label: 'Functions', icon: Workflow, enabled: true},
-  {key: 'frames', label: 'Frames', icon: Settings, enabled: true},
+  { key: 'testDrive', label: 'Test Drive', icon: Gauge, enabled: true },
+  { key: 'engine', label: 'Engine', icon: Wrench, enabled: true },
+  { key: 'functions', label: 'Functions', icon: Workflow, enabled: true },
+  { key: 'frames', label: 'Frames', icon: Settings, enabled: true },
   {
     key: 'refurbishment',
     label: 'Refurbishment Cost',
     icon: BadgeIndianRupee,
     enabled: true,
   },
-  {key: 'defective', label: 'Defective parts', icon: AlertTriangle, enabled: true},
+  { key: 'defective', label: 'Defective parts', icon: AlertTriangle, enabled: true },
 ];
 
 type ModuleProgress = {
@@ -62,7 +66,7 @@ type ModuleProgress = {
 const InspectionModulesScreen = () => {
   const navigation = useNavigation<any>();
   const route = useRoute();
-  const {sellCarId} = (route.params as RouteParams) || {};
+  const { sellCarId } = (route.params as RouteParams) || {};
   const formattedSellCarId =
     sellCarId == null ? '' : String(sellCarId).trim();
   const [progressMap, setProgressMap] = useState<Record<string, ModuleProgress>>(
@@ -74,9 +78,12 @@ const InspectionModulesScreen = () => {
   const [allCompleted, setAllCompleted] = useState(false);
   const [rating, setRating] = useState(0);
   const [ratingComment, setRatingComment] = useState('');
+  const [pickupRemark, setPickupRemark] = useState('');
+  const [drivingExperience, setDrivingExperience] = useState('');
   const [refurbTotal, setRefurbTotal] = useState('0');
+  const [ratingSaved, setRatingSaved] = useState(false);
 
-  const fetchProgress = async (opts?: {isRefresh?: boolean}) => {
+  const fetchProgress = async (opts?: { isRefresh?: boolean }) => {
     if (!formattedSellCarId) {
       return;
     }
@@ -87,129 +94,382 @@ const InspectionModulesScreen = () => {
     }
     setError(null);
     try {
-      const [vehicleRes, inspectionRes, refurbRes, defectsRes] = await Promise.all([
+      const [
+        vehicleResResult,
+        inspectionResResult,
+        refurbResResult,
+        defectsResResult,
+      ] = await Promise.allSettled([
         client.get('/api/view-vehicle-details-inspection', {
-          params: {sellCarId: formattedSellCarId},
+          params: { sellCarId: formattedSellCarId },
         }),
         client.get('/api/view-inspection', {
-          params: {sellCarId: formattedSellCarId},
+          params: { sellCarId: formattedSellCarId },
         }),
-        client
-          .get('/api/view-refurbishment-cost', {
-            params: {sellCarId: formattedSellCarId},
-          })
-          .catch(err => {
-            console.warn('Failed to fetch refurbishment cost', err);
-            return null;
-          }),
-        client
-          .get('/api/view-defects-inspection', {
-            params: {sellCarId: formattedSellCarId},
-          })
-          .catch(err => {
-            console.warn('Failed to fetch defects', err);
-            return null;
-          }),
+        client.get('/api/view-refurbishment-cost', {
+          params: { sellCarId: formattedSellCarId },
+        }),
+        client.get('/api/view-defects-inspection', {
+          params: { sellCarId: formattedSellCarId },
+        }),
       ]);
+
+      const vehicleRes =
+        vehicleResResult.status === 'fulfilled' ? vehicleResResult.value : null;
+      const inspectionRes =
+        inspectionResResult.status === 'fulfilled'
+          ? inspectionResResult.value
+          : null;
+      const refurbRes =
+        refurbResResult.status === 'fulfilled' ? refurbResResult.value : null;
+      const defectsRes =
+        defectsResResult.status === 'fulfilled' ? defectsResResult.value : null;
+
+      const extractError = (r: any) =>
+        r?.reason?.response?.data?.message ||
+        r?.reason?.message ||
+        'Request failed';
+      const apiErrors = [
+        { res: vehicleResResult, label: 'vehicle' },
+        { res: inspectionResResult, label: 'inspection' },
+        { res: refurbResResult, label: 'refurb' },
+        { res: defectsResResult, label: 'defects' },
+      ]
+        .filter(r => r.res.status === 'rejected')
+        .map(({ res, label }) => ({ label, message: extractError(res) }));
+      const blockingErrors: string[] = [];
+      if (vehicleResResult.status === 'rejected') {
+        blockingErrors.push(`Vehicle fetch failed: ${extractError(vehicleResResult)}`);
+      }
+      if (inspectionResResult.status === 'rejected') {
+        blockingErrors.push(`Inspection fetch failed: ${extractError(inspectionResResult)}`);
+      }
+      if (blockingErrors.length > 0) {
+        console.warn('[InspectionModules] blocking errors', blockingErrors);
+        setError(blockingErrors[0]);
+      } else if (apiErrors.length > 0) {
+        console.warn('[InspectionModules] Non-blocking fetch errors', apiErrors);
+      }
+      console.log('[InspectionModules] fetch results', {
+        sellCarId: formattedSellCarId,
+        vehicleOk: !!vehicleRes,
+        inspectionOk: !!inspectionRes,
+        refurbOk: !!refurbRes,
+        defectsOk: !!defectsRes,
+        errors: apiErrors,
+      });
+
+      let ratingResOk: any = null;
+      try {
+        ratingResOk = await client.get('/api/view-evaluator-rating', {
+          params: { sellCarId: formattedSellCarId },
+        });
+      } catch (err: any) {
+        console.warn('Failed to fetch evaluator rating', err?.message || err);
+      }
 
       const nextProgress: Record<string, ModuleProgress> = {};
 
-      // Vehicle details progress (field level)
-      const engineInfo: Record<string, any> | null =
-        vehicleRes.data?.data?.vehicleDetails?.vehicleDetails?.['Engine Info'] ||
-        vehicleRes.data?.data?.vehicleDetails?.vehicleDetails?.engineInfo ||
-        vehicleRes.data?.data?.EngineInfo ||
-        vehicleRes.data?.data?.engineInfo ||
-        vehicleRes.data?.data?.['Engine Info'] ||
-        null;
+      // Vehicle details progress (aggregate of step 1a/1b/1c)
+      let engineInfo: Record<string, any> | null = null;
+      let rcDetails: Record<string, any> | null = null;
+      let regDetails: Record<string, any> | null = null;
+      if (vehicleRes) {
+        const vehicleDetails =
+          vehicleRes?.data?.data?.vehicleDetails?.vehicleDetails ||
+          vehicleRes?.data?.data?.vehiclesDetails?.vehicleDetails ||
+          vehicleRes?.data?.data?.vehicleDetails ||
+          vehicleRes?.data?.data?.vehiclesDetails ||
+          {};
+        engineInfo =
+          vehicleDetails?.['Engine Info'] ||
+          vehicleDetails?.engineInfo ||
+          vehicleRes?.data?.data?.EngineInfo ||
+          vehicleRes?.data?.data?.engineInfo ||
+          vehicleRes?.data?.data?.['Engine Info'] ||
+          null;
+        rcDetails =
+          vehicleDetails?.['RC Details'] || vehicleDetails?.rcDetails || null;
+        regDetails =
+          vehicleDetails?.['Registration Details'] ||
+          vehicleDetails?.registrationDetails ||
+          null;
+      }
 
-      if (engineInfo && typeof engineInfo === 'object') {
-        const requiredKeys = [
-          'Chassis Number',
-          'Manufacturer Name',
-          'Chassis Number Embossing',
-          'Engine Number',
-          'Engine CC',
-          'Year of Manufacturing',
-          'Car Type',
-          'Model Name',
-          'Variant Name',
-          'Colour',
-          'Paint Type',
-          'Transmission',
-          'Emission',
-          'Date of Registration',
-          'Odometer Reading',
-          'Fuel Type',
-          'External CNG/LPG Fitment',
-          'No. of Owners',
-          'Duplicate Key Available',
-          'VIN Plate Available',
-          'Jack & Toolkit Available',
-          'Spare Wheel Available',
-          'Insurance Type',
-          'Insurance Valid Upto',
+      const hasValue = (v: any) => {
+        if (v == null) {
+          return false;
+        }
+        if (typeof v === 'string') {
+          return v.trim() !== '';
+        }
+        return true;
+      };
+
+      const requiredEngine = [
+        'Chassis Number',
+        'Manufacturer Name',
+        'Chassis Number Embossing',
+        'Engine Number',
+        'Engine CC',
+        'Year of Manufacturing',
+        'Car Type',
+        'Model Name',
+        'Variant Name',
+        'Colour',
+        'Paint Type',
+        'Transmission',
+        'Emission',
+        'Date of Registration',
+        'Odometer Reading',
+        'Fuel Type',
+        'External CNG/LPG Fitment',
+        'No. of Owners',
+        'Duplicate Key Available',
+        'VIN Plate Available',
+        'Jack & Toolkit Available',
+        'Spare Wheel Available',
+        'Insurance Type',
+        'Insurance Valid Upto',
+      ];
+      const optionalEngine = ['Insurance IDV Value'];
+
+      const requiredRc = [
+        'Name on RC',
+        'Phone Number',
+        'Profession',
+        'RC Availability',
+        'RC Condition',
+        'Mismatch on RC',
+        'RC image.Front',
+        'RC image.Back',
+      ];
+      const optionalRc = ['Address', 'Email ID'];
+
+      const requiredReg = [
+        'Registration State',
+        'Registration City',
+        'RTO',
+        'RTO NOC Issued',
+        'Registration Valid',
+        'Road Tax Paid',
+        'Commercial Vehicle',
+        'Under Hypothecation',
+        'Tax image',
+      ];
+
+      const toCamel = (s: string) =>
+        s
+          .replace(/[^a-zA-Z0-9]+(.)/g, (_, c) => (c ? c.toUpperCase() : ''))
+          .replace(/^./, m => m.toLowerCase());
+      const aliasMap: Record<string, string[]> = {
+        'Car Type': ['carType', 'CarType', 'car_type'],
+        'Fuel Type': ['fuelType', 'FuelType', 'fuel_type'],
+        Colour: ['Color', 'colour', 'color'],
+        'Paint Type': ['paintType', 'PaintType', 'paint_type'],
+        'External CNG/LPG Fitment': [
+          'externalFitment',
+          'ExternalFitment',
+          'externalCngLpgFitment',
+          'ExternalCngLpgFitment',
+          'cngLpgFitment',
+        ],
+        'Insurance Valid Upto': ['insuranceValidUpto', 'insurance_valid_upto', 'insuranceValidUpTo'],
+        'Insurance Type': ['insuranceType'],
+        'Insurance IDV Value': ['insuranceIdvValue', 'insuranceIdv'],
+        'RC image': ['rcImage', 'rcImages'],
+        'Tax image': ['taxImage', 'taxDocument', 'tax'],
+        'No. of Owners': [
+          'No. of owners',
+          'No.of Owners',
+          'No of Owners',
+          'noOfOwners',
+          'owners',
+          'ownerCount',
+          'ownersCount',
+          'no_of_owners',
+          'noOfOwner',
+          'ownersCount',
+          'noofowners',
+        ],
+      };
+      const val = (obj: any, key: string) => {
+        if (!obj) return null;
+        if (key.includes('.') && !/\s/.test(key)) {
+          const [root, child] = key.split('.');
+          const lowerRoot = typeof root === 'string' ? root.toLowerCase() : root;
+          return obj[root]?.[child] ?? obj[lowerRoot]?.[child];
+        }
+        const lowerKey = typeof key === 'string' ? key.toLowerCase() : key;
+        const camelKey = typeof key === 'string' ? toCamel(key) : key;
+        const compact = typeof key === 'string' ? key.replace(/\s+/g, '') : key;
+        const aliasKeys = aliasMap[key] || [];
+        const cleanKey =
+          typeof key === 'string' ? key.replace(/[^a-zA-Z0-9]/g, '') : key;
+        const lowerClean =
+          typeof cleanKey === 'string' ? cleanKey.toLowerCase() : cleanKey;
+        const candidates = [
+          key,
+          lowerKey,
+          camelKey,
+          toCamel(lowerKey as string),
+          compact,
+          typeof compact === 'string' ? compact.toLowerCase() : compact,
+          typeof key === 'string' ? key.replace(/\s+/g, '_') : key,
+          typeof lowerKey === 'string' ? (lowerKey as string).replace(/\s+/g, '_') : lowerKey,
+          cleanKey,
+          lowerClean,
+          ...aliasKeys,
+          ...aliasKeys.map(toCamel),
+          ...aliasKeys.map(k => k.replace(/\s+/g, '')),
+          ...aliasKeys.map(k => k.replace(/[^a-zA-Z0-9]/g, '')),
         ];
-        const optionalKeys = ['Insurance IDV Value'];
-
-        const hasValue = (v: any) => {
-          if (v == null) {
-            return false;
+        for (const c of candidates) {
+          if (obj && Object.prototype.hasOwnProperty.call(obj, c)) {
+            return obj[c];
           }
-          if (typeof v === 'string') {
-            return v.trim() !== '';
-          }
-          return true;
-        };
+        }
+        return null;
+      };
 
-        const filled = requiredKeys.filter(k => hasValue(engineInfo[k])).length;
-        const requiredLeft = requiredKeys.filter(k => !hasValue(engineInfo[k]))
+      if (vehicleRes && (engineInfo || rcDetails || regDetails)) {
+        const engineFilled = requiredEngine.filter(k => hasValue(val(engineInfo, k)))
           .length;
-        const optionalLeft = optionalKeys.filter(k => !hasValue(engineInfo[k]))
-          .length;
-        const total = requiredKeys.length;
-        nextProgress.vehicleDetails = {
-          pct: Math.min(100, Math.round((filled / total) * 100)),
-          requiredLeft,
-          optionalLeft,
-          hasExplicitCounts: true,
-        };
+        const rcFilled = requiredRc.filter(k => {
+          if (k === 'RC image.Front') {
+            const images = val(rcDetails, 'RC image') || val(rcDetails, 'rcImage') || val(rcDetails, 'rcImages') || {};
+            return hasValue(images.Front || images.front);
+          }
+          if (k === 'RC image.Back') {
+            const images = val(rcDetails, 'RC image') || val(rcDetails, 'rcImage') || val(rcDetails, 'rcImages') || {};
+            return hasValue(images.Back || images.back);
+          }
+          return hasValue(val(rcDetails, k));
+        }).length;
+        const regFilled = requiredReg.filter(k => hasValue(val(regDetails, k))).length;
+
+        const totalRequired =
+          requiredEngine.length + requiredRc.length + requiredReg.length;
+        if (totalRequired > 0) {
+          const filledTotal = engineFilled + rcFilled + regFilled;
+          const optionalLeft =
+            (optionalEngine.filter(k => !hasValue(val(engineInfo, k))).length || 0) +
+            (optionalRc.filter(k => !hasValue(val(rcDetails, k))).length || 0);
+          const requiredLeft = totalRequired - filledTotal;
+          nextProgress.vehicleDetails = {
+            pct:
+              requiredLeft === 0
+                ? 100
+                : Math.min(100, Math.round((filledTotal / totalRequired) * 100)),
+            requiredLeft,
+            optionalLeft,
+            hasExplicitCounts: true,
+          };
+          if (requiredLeft > 0) {
+            const missingEngine = requiredEngine.filter(k => !hasValue(val(engineInfo, k)));
+            const missingRc = requiredRc.filter(k => {
+              if (k === 'RC image.Front') {
+                const images = val(rcDetails, 'RC image') || val(rcDetails, 'rcImage') || val(rcDetails, 'rcImages') || {};
+                return !hasValue(images.Front || images.front);
+              }
+              if (k === 'RC image.Back') {
+                const images = val(rcDetails, 'RC image') || val(rcDetails, 'rcImage') || val(rcDetails, 'rcImages') || {};
+                return !hasValue(images.Back || images.back);
+              }
+              return !hasValue(val(rcDetails, k));
+            });
+            const missingReg = requiredReg.filter(k => !hasValue(val(regDetails, k)));
+            console.log('[InspectionModules] vehicleDetails missing fields', {
+              missingEngine,
+              missingRc,
+              missingReg,
+            });
+          }
+        }
       }
 
       // Module-level completion flags from inspection API
+      const inspectionData =
+        inspectionRes?.data?.data?.allInspections?.[0] || {};
       const completed: Record<string, boolean> =
-        inspectionRes.data?.data?.allInspections?.[0]?.completed || {};
+        (inspectionData?.completed as Record<string, boolean>) || {};
       const refurbData =
         refurbRes?.data?.data?.refurbishmentCost?.['Total RF Cost'] || null;
       const functionsData =
-        inspectionRes.data?.data?.allInspections?.[0]?.functions ||
-        inspectionRes.data?.data?.allInspections?.[0]?.Functions ||
-        inspectionRes.data?.data?.functions ||
-        inspectionRes.data?.functions;
+        inspectionData?.functions ||
+        inspectionData?.Functions ||
+        inspectionRes?.data?.data?.functions ||
+        inspectionRes?.data?.functions;
       const framesData =
-        inspectionRes.data?.data?.allInspections?.[0]?.frames ||
-        inspectionRes.data?.data?.frames ||
-        inspectionRes.data?.frames;
+        inspectionData?.frames ||
+        inspectionRes?.data?.data?.frames ||
+        inspectionRes?.data?.frames;
       const defectsData =
         defectsRes?.data?.data?.DefectsReport?.Reports?.Report || [];
-      const moduleKeyMap: {api: string; ui: string}[] = [
-        {api: 'exterior', ui: 'exterior'},
-        {api: 'interior', ui: 'electrical'},
-        {api: 'testDrive', ui: 'testDrive'},
-        {api: 'engine', ui: 'engine'},
-        {api: 'functions', ui: 'functions'},
-        {api: 'frames', ui: 'frames'},
-        {api: 'refurbishmentCost', ui: 'refurbishment'},
-        {api: 'defective', ui: 'defective'},
+      const exteriorData =
+        inspectionData?.exterior ||
+        inspectionData?.Exterior ||
+        inspectionData?.ExteriorInspection;
+      const interiorData =
+        inspectionData?.interior ||
+        inspectionData?.Interior ||
+        inspectionData?.electrical ||
+        inspectionData?.Electrical ||
+        inspectionData?.electricalInterior ||
+        inspectionData?.ElectricalInterior;
+      const engineData =
+        inspectionData?.engine ||
+        inspectionData?.Engine ||
+        inspectionData?.engineInspection ||
+        inspectionData?.EngineInspection;
+      const testDriveData =
+        inspectionData?.testDrive ||
+        inspectionData?.TestDrive ||
+        inspectionData?.test_drive ||
+        inspectionData?.testdrive ||
+        inspectionData?.['Test Drive'];
+      const hasDataFlags: Record<string, boolean> = {
+        vehicleDetails: !!(engineInfo || rcDetails || regDetails),
+        exterior: !!exteriorData,
+        interior: !!interiorData,
+        testDrive: !!testDriveData,
+        engine: !!engineData,
+        functions: !!functionsData,
+        frames: !!framesData,
+        refurbishmentCost: !!refurbData,
+        defective: Array.isArray(defectsData) ? defectsData.length > 0 : false,
+      };
+      const moduleKeyMap: { api: string; ui: string }[] = [
+        { api: 'exterior', ui: 'exterior' },
+        { api: 'interior', ui: 'electrical' },
+        { api: 'testDrive', ui: 'testDrive' },
+        { api: 'engine', ui: 'engine' },
+        { api: 'functions', ui: 'functions' },
+        { api: 'frames', ui: 'frames' },
+        { api: 'refurbishmentCost', ui: 'refurbishment' },
+        { api: 'defective', ui: 'defective' },
       ];
-      moduleKeyMap.forEach(({api, ui}) => {
-        const isDone = !!completed[api];
-        nextProgress[ui] = {
-          pct: isDone ? 100 : 0,
-          requiredLeft: isDone ? 0 : -1,
-          optionalLeft: -1,
-          hasExplicitCounts: false,
-        };
+      moduleKeyMap.forEach(({ api, ui }) => {
+        const isDone = !!completed[api] || !!hasDataFlags[api];
+        const existing = nextProgress[ui];
+        if (existing) {
+          // Preserve detailed counts if we already computed them; just upgrade to 100 if backend marks completed
+          nextProgress[ui] = isDone
+            ? {
+              ...existing,
+              pct: 100,
+              requiredLeft: existing.requiredLeft >= 0 ? 0 : existing.requiredLeft,
+              optionalLeft: existing.optionalLeft,
+            }
+            : existing;
+        } else {
+          nextProgress[ui] = {
+            pct: isDone ? 100 : 0,
+            requiredLeft: isDone ? 0 : -1,
+            optionalLeft: -1,
+            hasExplicitCounts: false,
+          };
+        }
       });
 
       // If vehicle details completion flag is present but we lacked field-level info
@@ -223,32 +483,41 @@ const InspectionModulesScreen = () => {
       }
 
       // Local draft-based progress overrides (best-effort)
+      let evalRating: any = null;
       try {
         const functionsDraft = loadDraft<any>(formattedSellCarId, 'functions');
         const computeFunctionsPct = (src: any) => {
-          const required = 10;
+          const source = src?.Reports || src?.reports || src;
+          const required = 11;
           const proper =
-            src?.proper_condition ||
-            src?.properCondition ||
-            src?.['proper_condition'] ||
+            source?.proper_condition ||
+            source?.properCondition ||
+            source?.['proper_condition'] ||
             {};
           const noise =
-            src?.['noise/leakage'] ||
-            src?.noiseLeakage ||
-            src?.noise ||
+            source?.['noise/leakage'] ||
+            source?.noiseLeakage ||
+            source?.noise ||
             {};
+          const refurb =
+            source?.refurbCost ||
+            source?.refurbishmentCost ||
+            source?.['Refurbishment Cost'];
           const toggles = [
-            src?.steering || proper?.Steering,
-            src?.suspension || proper?.Suspension,
-            src?.brake || proper?.Brake,
-            src?.gearShifting || proper?.['Gear Shifting'],
-            src?.driveShaft || proper?.['Drive Shaft/ Axle'] || proper?.['Drive Shaft'],
-            src?.clutch || proper?.Clutch,
-            src?.wheelBearingNoise || noise?.['Wheel Bearing Noise'],
-            src?.gearBoxNoise || noise?.['Gear Box Noise'],
-            src?.transmissionLeakage ||
-              noise?.['Transmission/ Differential Oil Leakage'],
-            src?.differentialNoise || noise?.['Differential Noise'],
+            source?.steering || proper?.Steering,
+            source?.suspension || proper?.Suspension,
+            source?.brake || proper?.Brake,
+            source?.gearShifting || proper?.['Gear Shifting'],
+            source?.driveShaft ||
+            proper?.['Drive Shaft/ Axle'] ||
+            proper?.['Drive Shaft'],
+            source?.clutch || proper?.Clutch,
+            source?.wheelBearingNoise || noise?.['Wheel Bearing Noise'],
+            source?.gearBoxNoise || noise?.['Gear Box Noise'],
+            source?.transmissionLeakage ||
+            noise?.['Transmission/ Differential Oil Leakage'],
+            source?.differentialNoise || noise?.['Differential Noise'],
+            refurb,
           ];
           const filled = toggles.filter(Boolean).length;
           return {
@@ -295,11 +564,20 @@ const InspectionModulesScreen = () => {
 
         const tdDraft = loadDraft<any>(formattedSellCarId, 'testDrive');
         if (tdDraft) {
-          const isComplete = !!tdDraft.isComplete;
+          const isComplete =
+            tdDraft.isComplete ||
+            tdDraft.testDriveCompleted ||
+            tdDraft['Test Drive Completed'] ||
+            false;
           const required = isComplete ? 4 : 3;
           let filled = 0;
           if (tdDraft.drivingExperience) filled += 1;
-          if (tdDraft.problem) filled += 1;
+          const problems = Array.isArray(tdDraft.problems)
+            ? tdDraft.problems
+            : tdDraft.problem
+              ? [tdDraft.problem]
+              : [];
+          if (problems.filter(Boolean).length > 0) filled += 1;
           if (isComplete) {
             if (tdDraft.kmsDriven) filled += 1;
             if (tdDraft.timeTaken) filled += 1;
@@ -460,7 +738,20 @@ const InspectionModulesScreen = () => {
           hasExplicitCounts: true,
         };
         // capture refurb total for banner display
-        if (refurbData) {
+        evalRating =
+          ratingResOk?.data?.data?.evaluatorRating ||
+          ratingResOk?.data?.evaluatorRating ||
+          null;
+        if (evalRating) {
+          console.log('[InspectionModules] evaluator rating payload', evalRating);
+          const total =
+            evalRating['Total RF Cost'] ||
+            evalRating.totalRfCost ||
+            evalRating.total_rf_cost ||
+            evalRating.total ||
+            0;
+          setRefurbTotal(String(total || 0));
+        } else if (refurbData) {
           const other = refurbData['Other Refurbishment Cost'] || refurbData.other || {};
           const docs = refurbData.Document || refurbData.document || {};
           const nums = [
@@ -501,13 +792,47 @@ const InspectionModulesScreen = () => {
         console.warn('Failed to use draft progress', err);
       }
 
-      setProgressMap(nextProgress);
-    } catch (err: any) {
-      setError(
-        err?.response?.data?.message ||
-          err?.message ||
-          'Failed to load progress',
+      const requiredCompletedKeys = [
+        'vehicleDetails',
+        'engine',
+        'exterior',
+        'interior',
+        'functions',
+        'frames',
+        'testDrive',
+        'refurbishmentCost',
+        'defective',
+      ];
+      const doneFromFlags = requiredCompletedKeys.every(
+        key => completed[key] === true || hasDataFlags[key],
       );
+      if (evalRating) {
+        const stars = Number(evalRating['Evaluator Rating'] || 0);
+        const drive = evalRating['Driving Experience'] || '';
+        const comments = evalRating['Comments'] || '';
+        const pickup = evalRating['Pickup remark'] || evalRating['Pickup Remark'] || '';
+        setRating(isNaN(stars) ? 0 : stars);
+        setDrivingExperience(drive);
+        setRatingComment(comments);
+        setPickupRemark(pickup);
+      }
+
+      console.log('[InspectionModules] progress snapshot', {
+        completedFlags: completed,
+        hasDataFlags,
+        computedProgress: nextProgress,
+        allCompleted: doneFromFlags,
+      });
+
+      setProgressMap(nextProgress);
+      setAllCompleted(doneFromFlags);
+    } catch (err: any) {
+      const msg =
+        err?.response?.data?.message ||
+        err?.message ||
+        'Failed to load progress';
+      console.error('[InspectionModules] fetchProgress failed', msg, err);
+      setError(msg);
     } finally {
       if (opts?.isRefresh) {
         setRefreshing(false);
@@ -521,44 +846,28 @@ const InspectionModulesScreen = () => {
     fetchProgress();
   }, [formattedSellCarId]);
 
-  useEffect(() => {
-    const keys = modules.map(m => m.key);
-    const done = keys.every(k => {
-      const prog = progressMap[k];
-      if (!prog) return false;
-      if (k === 'refurbishment') {
-        return prog.optionalLeft === 0;
-      }
-      if (k === 'defective') {
-        return prog.optionalLeft > 0 || prog.pct >= 100;
-      }
-      return prog.pct >= 100;
-    });
-    setAllCompleted(done);
-  }, [progressMap]);
-
   const openModule = (key: string) => {
     if (!formattedSellCarId) {
       return;
     }
     if (key === 'vehicleDetails') {
-      navigation.navigate('VehicleDetails', {sellCarId: formattedSellCarId});
+      navigation.navigate('VehicleDetails', { sellCarId: formattedSellCarId });
     } else if (key === 'engine') {
-      navigation.navigate('EngineInspection', {sellCarId: formattedSellCarId});
+      navigation.navigate('EngineInspection', { sellCarId: formattedSellCarId });
     } else if (key === 'exterior') {
-      navigation.navigate('Exterior', {sellCarId: formattedSellCarId});
+      navigation.navigate('Exterior', { sellCarId: formattedSellCarId });
     } else if (key === 'electrical') {
-      navigation.navigate('ElectricalInterior', {sellCarId: formattedSellCarId});
+      navigation.navigate('ElectricalInterior', { sellCarId: formattedSellCarId });
     } else if (key === 'testDrive') {
-      navigation.navigate('TestDrive', {sellCarId: formattedSellCarId});
+      navigation.navigate('TestDrive', { sellCarId: formattedSellCarId });
     } else if (key === 'functions') {
-      navigation.navigate('FunctionsInspection', {sellCarId: formattedSellCarId});
+      navigation.navigate('FunctionsInspection', { sellCarId: formattedSellCarId });
     } else if (key === 'frames') {
-      navigation.navigate('FramesInspection', {sellCarId: formattedSellCarId});
+      navigation.navigate('FramesInspection', { sellCarId: formattedSellCarId });
     } else if (key === 'refurbishment') {
-      navigation.navigate('RefurbishmentCost', {sellCarId: formattedSellCarId});
+      navigation.navigate('RefurbishmentCost', { sellCarId: formattedSellCarId });
     } else if (key === 'defective') {
-      navigation.navigate('DefectiveParts', {sellCarId: formattedSellCarId});
+      navigation.navigate('DefectiveParts', { sellCarId: formattedSellCarId });
     }
   };
 
@@ -568,18 +877,18 @@ const InspectionModulesScreen = () => {
         <Pressable
           style={styles.backBtn}
           onPress={() => navigation.goBack()}
-          android_ripple={{color: 'rgba(0,0,0,0.08)'}}>
+          android_ripple={{ color: 'rgba(0,0,0,0.08)' }}>
           <ChevronLeft size={18} color="#111827" strokeWidth={2.3} />
         </Pressable>
         <Text style={styles.headerTitle}>Inspection</Text>
-        <View style={{width: 32}} />
+        <View style={{ width: 32 }} />
       </View>
 
       <ScrollView
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
-            onRefresh={() => fetchProgress({isRefresh: true})}
+            onRefresh={() => fetchProgress({ isRefresh: true })}
             colors={[PRIMARY]}
             tintColor={PRIMARY}
           />
@@ -614,9 +923,12 @@ const InspectionModulesScreen = () => {
                       key={v}
                       onPress={() => setRating(v)}
                       style={styles.starBtn}>
-                      <Text style={[styles.starText, active && styles.starTextActive]}>
-                        ★
-                      </Text>
+                      <Star
+                        size={30}
+                        color={active ? '#d0312d' : '#9ca3af'}
+                        fill={active ? '#d0312d' : 'none'}
+                        strokeWidth={1}
+                      />
                     </Pressable>
                   );
                 })}
@@ -627,6 +939,31 @@ const InspectionModulesScreen = () => {
                   <Text style={styles.rfChipText}>Rs. {refurbTotal || '0'}</Text>
                 </View>
               </View>
+              <View style={styles.expRow}>
+                <Text style={styles.expLabel}>Select Driving Experience</Text>
+                <View style={styles.expButtons}>
+                  {['Poor', 'Average', 'Good', 'Excellent'].map(opt => {
+                    const active = drivingExperience === opt;
+                    return (
+                      <Pressable
+                        key={opt}
+                        style={[
+                          styles.expBtn,
+                          active && styles.expBtnActive,
+                        ]}
+                        onPress={() => setDrivingExperience(opt)}>
+                        <Text
+                          style={[
+                            styles.expBtnText,
+                            active && styles.expBtnTextActive,
+                          ]}>
+                          {opt}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </View>
               <TextInput
                 style={styles.commentInput}
                 value={ratingComment}
@@ -635,6 +972,38 @@ const InspectionModulesScreen = () => {
                 placeholderTextColor="#9ca3af"
                 multiline
               />
+              <TextInput
+                style={[styles.commentInput, { marginTop: 8 }]}
+                value={pickupRemark}
+                onChangeText={setPickupRemark}
+                placeholder="Pickup remark..."
+                placeholderTextColor="#9ca3af"
+                multiline
+              />
+              <Pressable
+                disabled={rating <= 0 || !drivingExperience}
+                style={[
+                  styles.ratingSaveBtn,
+                  ratingSaved && styles.ratingSaveBtnSuccess,
+                  (rating <= 0 || !drivingExperience) && styles.ratingSaveBtnDisabled,
+                ]}
+                onPress={() => {
+                  if (rating <= 0 || !drivingExperience) return;
+                  setRatingSaved(true);
+                }}>
+                {ratingSaved ? (
+                  <View style={styles.ratingSaveInner}>
+                    <View style={styles.ratingSaveIconOnly}>
+                      <FileText size={20} color={PRIMARY} strokeWidth={2.2} />
+                    </View>
+                    <Text style={styles.ratingSaveLabel}>Download Report</Text>
+                  </View>
+                ) : (
+                  <View style={styles.ratingSaveIconOnly}>
+                    <Check size={20} color={PRIMARY} strokeWidth={4} />
+                  </View>
+                )}
+              </Pressable>
             </View>
           ) : null}
 
@@ -648,7 +1017,7 @@ const InspectionModulesScreen = () => {
                 optionalLeft: -1,
                 hasExplicitCounts: false,
               };
-              const {pct, requiredLeft, optionalLeft, hasExplicitCounts} =
+              const { pct, requiredLeft, optionalLeft, hasExplicitCounts } =
                 progress;
               const isOptionalModule = item.key === 'vehicleDetails';
               const isRefurbishment = item.key === 'refurbishment';
@@ -676,27 +1045,12 @@ const InspectionModulesScreen = () => {
                 if (completedAllFields) {
                   return 'Completed';
                 }
-                const requiredText =
-                  hasExplicitCounts && requiredLeft > 0
-                    ? `${requiredLeft} required ${requiredLeft === 1 ? 'field' : 'fields'} left`
-                    : null;
-                const optionalText =
-                  hasExplicitCounts && optionalLeft > 0
-                    ? `${optionalLeft} optional ${optionalLeft === 1 ? 'field' : 'fields'} left`
-                    : null;
-                if (requiredText && optionalText) {
-                  return `${requiredText}, ${optionalText}`;
-                }
-                return (
-                  requiredText ||
-                  optionalText ||
-                  (isOptionalModule ? 'Optional fields' : 'Required fields')
-                );
+                return 'Required fields';
               })();
               const hintStyle =
                 (isRefurbishment && refurbOptionalLeft > 0) ||
-                (isDefective && defectCount === 0) ||
-                !completedAllFields
+                  (isDefective && defectCount === 0) ||
+                  !completedAllFields
                   ? styles.progressHint
                   : styles.progressComplete;
               return (
@@ -719,7 +1073,7 @@ const InspectionModulesScreen = () => {
                       strokeWidth={2.3}
                     />
                   </View>
-                  <View style={{flex: 1}}>
+                  <View style={{ flex: 1 }}>
                     <Text
                       style={[
                         styles.itemLabel,
@@ -728,25 +1082,29 @@ const InspectionModulesScreen = () => {
                       {item.label}
                     </Text>
                     {!isDefective ? (
-                      <View>
-                        <View style={styles.progressBar}>
-                          <View
-                            style={[
-                              styles.progressFill,
-                              {
-                                width: `${pct}%`,
-                                backgroundColor: disabled ? '#e5e7eb' : PRIMARY,
-                              },
-                            ]}
-                          />
-                        </View>
-                        <View style={styles.progressValueRow}>
-                          {!isRefurbishment ? (
+                      isRefurbishment ? (
+                        <Text style={styles.commentText}>
+                          Add refurbishment costs and documents when available.
+                        </Text>
+                      ) : (
+                        <View>
+                          <View style={styles.progressBar}>
+                            <View
+                              style={[
+                                styles.progressFill,
+                                {
+                                  width: `${pct}%`,
+                                  backgroundColor: disabled ? '#e5e7eb' : PRIMARY,
+                                },
+                              ]}
+                            />
+                          </View>
+                          <View style={styles.progressValueRow}>
                             <Text style={styles.progressValue}>{`${pct}%`}</Text>
-                          ) : null}
-                          <Text style={hintStyle}>{hintLabel}</Text>
+                            <Text style={hintStyle}>{hintLabel}</Text>
+                          </View>
                         </View>
-                      </View>
+                      )
                     ) : (
                       <View style={styles.progressValueRow}>
                         <Text style={styles.progressComplete}>{hintLabel}</Text>
@@ -807,7 +1165,7 @@ const styles = StyleSheet.create({
     elevation: 1,
     shadowColor: '#0f172a',
     shadowOpacity: 0.06,
-    shadowOffset: {width: 0, height: 10},
+    shadowOffset: { width: 0, height: 10 },
     shadowRadius: 12,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: '#e5e7eb',
@@ -900,6 +1258,11 @@ const styles = StyleSheet.create({
     color: '#c99700',
     fontWeight: '700',
   },
+  commentText: {
+    marginTop: 6,
+    fontSize: 12,
+    color: '#6b7280',
+  },
   chevron: {
     fontSize: 20,
     color: '#9ca3af',
@@ -922,14 +1285,15 @@ const styles = StyleSheet.create({
   },
   ratingCard: {
     marginTop: 12,
-    padding: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 4,
     borderRadius: 14,
     backgroundColor: '#fff',
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: '#e5e7eb',
     shadowColor: '#0f172a',
     shadowOpacity: 0.06,
-    shadowOffset: {width: 0, height: 6},
+    shadowOffset: { width: 0, height: 6 },
     shadowRadius: 10,
   },
   ratingHeader: {
@@ -949,14 +1313,14 @@ const styles = StyleSheet.create({
   starsRow: {
     marginTop: 10,
     flexDirection: 'row',
-    gap: 8,
+    gap: 5,
   },
   starBtn: {
     width: 34,
     height: 34,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#d1d5db',
+    // borderRadius: 10,
+    // borderWidth: 1,
+    // borderColor: '#d1d5db',
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#fff',
@@ -990,6 +1354,40 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     fontSize: 12,
   },
+  expRow: {
+    marginTop: 14,
+  },
+  expLabel: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  expButtons: {
+    marginTop: 8,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  expBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    backgroundColor: '#fff',
+  },
+  expBtnActive: {
+    borderColor: '#d0312d',
+    backgroundColor: '#d0312d15',
+  },
+  expBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#374151',
+  },
+  expBtnTextActive: {
+    color: '#d0312d',
+  },
   commentInput: {
     marginTop: 12,
     borderWidth: 1,
@@ -1000,5 +1398,41 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#111827',
     textAlignVertical: 'top',
+  },
+  ratingSaveBtn: {
+    marginTop: 10,
+    alignSelf: 'flex-start',
+    minHeight: 44,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 12,
+    backgroundColor: PRIMARY + '15',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  ratingSaveBtnSuccess: {
+    backgroundColor: PRIMARY + '26',
+  },
+  ratingSaveBtnDisabled: {
+    opacity: 0.5,
+  },
+  ratingSaveIconOnly: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  ratingSaveInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  ratingSaveLabel: {
+    color: PRIMARY,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  ratingSaveText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '700',
   },
 });

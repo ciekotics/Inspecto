@@ -12,6 +12,8 @@ import {useNavigation, useRoute} from '@react-navigation/native';
 import {ChevronLeft} from 'lucide-react-native';
 import {PRIMARY} from '../utils/theme';
 import {client} from '../utils/apiClient';
+import {store} from '../store/store';
+import {loadDraft, saveDraft} from '../utils/draftStorage';
 
 type RouteParams = {
   sellCarId?: string | number;
@@ -24,6 +26,7 @@ const RefurbishmentCostScreen = () => {
   const formattedSellCarId =
     sellCarId == null ? '' : String(sellCarId).trim();
 
+  const [inspectionId, setInspectionId] = useState<string | number>('');
   const [popularWorkDemand, setPopularWorkDemand] = useState('');
   const [interiorCleaning, setInteriorCleaning] = useState('');
   const [rubbingPolishing, setRubbingPolishing] = useState('');
@@ -33,6 +36,8 @@ const RefurbishmentCostScreen = () => {
   const [pollutionCost, setPollutionCost] = useState('');
   const [registrationDocCost, setRegistrationDocCost] = useState('');
   const [prefillLoading, setPrefillLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
 
   const optionalTotal = useMemo(() => 8, []);
   const filledCount = useMemo(() => {
@@ -83,7 +88,11 @@ const RefurbishmentCostScreen = () => {
           params: {sellCarId: formattedSellCarId},
         });
         if (cancelled) return;
-        const totalRf = res.data?.data?.refurbishmentCost?.['Total RF Cost'];
+        const refurbData = res.data?.data?.refurbishmentCost;
+        if (refurbData?.id != null) {
+          setInspectionId(refurbData.id);
+        }
+        const totalRf = refurbData?.['Total RF Cost'];
         const docs = totalRf?.Document || {};
         const other = totalRf?.['Other Refurbishment Cost'] || {};
         if (other) {
@@ -120,6 +129,31 @@ const RefurbishmentCostScreen = () => {
     };
   }, [formattedSellCarId]);
 
+  useEffect(() => {
+    if (!formattedSellCarId) return;
+    const payload = {
+      popularWorkDemand,
+      interiorCleaning,
+      rubbingPolishing,
+      spareKeys,
+      accessoriesRepair,
+      insuranceCost,
+      pollutionCost,
+      registrationDocCost,
+    };
+    saveDraft(formattedSellCarId, 'refurbishment', payload);
+  }, [
+    formattedSellCarId,
+    popularWorkDemand,
+    interiorCleaning,
+    rubbingPolishing,
+    spareKeys,
+    accessoriesRepair,
+    insuranceCost,
+    pollutionCost,
+    registrationDocCost,
+  ]);
+
   const renderInput = (
     label: string,
     value: string,
@@ -138,6 +172,66 @@ const RefurbishmentCostScreen = () => {
       />
     </View>
   );
+
+  const handleSubmit = async () => {
+    setMessage(null);
+    if (!formattedSellCarId) {
+      setMessage('Missing sellCarId.');
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const otherCosts = {
+        'Popular Work Demand': popularWorkDemand || '0',
+        'Interior Cleaning': interiorCleaning || '0',
+        'Rubbing & Polishing': rubbingPolishing || '0',
+        'Spare Keys': spareKeys || '0',
+        'Accessories Repair': accessoriesRepair || '0',
+      };
+      const documents = {
+        'Insurance Cost': insuranceCost || '0',
+        'Pollution Cost': pollutionCost || '0',
+        'Registration/ Doc Cost': registrationDocCost || '0',
+      };
+
+      const payload = {
+        id: inspectionId || formattedSellCarId,
+        sellCarId: formattedSellCarId,
+        'Others RF Cost': {
+          'Other Refurbishment Cost': otherCosts,
+          Document: documents,
+        },
+      };
+      console.log('[Refurbishment] submit payload', payload);
+      await client.post('/api/add-refurbishment-cost', payload, {
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: '*/*',
+          Authorization: store.getState().auth.token
+            ? `Bearer ${store.getState().auth.token}`
+            : '',
+        },
+      });
+
+      setMessage(null);
+      navigation.navigate('DefectiveParts', {sellCarId: formattedSellCarId});
+    } catch (err: any) {
+      console.error('[Refurbishment] save failed', {
+        message: err?.message,
+        status: err?.response?.status,
+        data: err?.response?.data,
+      });
+      setMessage(
+        err?.response?.data?.message ||
+          err?.response?.data?.errors?.message ||
+          err?.message ||
+          'Failed to save refurbishment cost',
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   return (
     <SafeAreaView style={styles.root}>
@@ -195,11 +289,15 @@ const RefurbishmentCostScreen = () => {
           )}
 
           <Pressable
-            style={styles.nextBtn}
-            onPress={() => navigation.goBack()}
+            style={[styles.nextBtn, submitting && {opacity: 0.7}]}
+            onPress={handleSubmit}
+            disabled={submitting}
             android_ripple={{color: 'rgba(255,255,255,0.15)'}}>
-            <Text style={styles.nextLabel}>Next</Text>
+            <Text style={styles.nextLabel}>
+              {submitting ? 'Saving...' : 'Save & Next'}
+            </Text>
           </Pressable>
+          {message ? <Text style={styles.helperText}>{message}</Text> : null}
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -325,6 +423,11 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '700',
     color: '#ffffff',
+  },
+  helperText: {
+    marginTop: 10,
+    fontSize: 12,
+    color: '#b91c1c',
   },
   optionalHint: {
     marginTop: 4,

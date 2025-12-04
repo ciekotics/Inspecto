@@ -25,7 +25,13 @@ import {
 } from 'react-native-gesture-handler';
 import {nanoid} from '@reduxjs/toolkit';
 import {PRIMARY} from '../utils/theme';
-import {client} from '../utils/apiClient';
+import {useAppDispatch, useAppSelector} from '../store/hooks';
+import {
+  useAddDefectsMutation,
+  useGetDefectsQuery,
+  useGetInspectionQuery,
+} from '../store/services/inspectionApi';
+import {setDraft} from '../store/slices/defectsSlice';
 
 type RouteParams = {
   sellCarId?: string | number;
@@ -43,10 +49,26 @@ const DefectivePartsScreen = () => {
   const {sellCarId} = (route.params as RouteParams) || {};
   const formattedSellCarId =
     sellCarId == null ? '' : String(sellCarId).trim();
+  const dispatch = useAppDispatch();
+  const draft = useAppSelector(
+    state =>
+      formattedSellCarId ? state.defects.drafts[formattedSellCarId] : undefined,
+  );
+  const {data: inspectionData} = useGetInspectionQuery(
+    {sellCarId: formattedSellCarId},
+    {skip: !formattedSellCarId},
+  );
+  const {data: defectsData, isFetching: defectsLoading} = useGetDefectsQuery(
+    {sellCarId: formattedSellCarId},
+    {skip: !formattedSellCarId},
+  );
+  const [addDefects, {isLoading: saving}] = useAddDefectsMutation();
 
+  const [inspectionId, setInspectionId] = useState<string | number>('');
   const [items, setItems] = useState<DefectItem[]>([
     {id: nanoid(), uri: null, remark: ''},
   ]);
+  const [deletedFiles, setDeletedFiles] = useState<string[]>([]);
   const [pickerVisible, setPickerVisible] = useState<{
     open: boolean;
     id: string | null;
@@ -58,6 +80,9 @@ const DefectivePartsScreen = () => {
   const lastScale = useRef(1);
   const combinedScale = Animated.multiply(baseScale, pinchScale);
   const doubleTapRef = useRef<TapGestureHandler | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const lastSavedRef = useRef<string>('');
 
   const pieceCountLabel = useMemo(() => {
     const count = items.length;
@@ -66,35 +91,65 @@ const DefectivePartsScreen = () => {
   }, [items]);
 
   useEffect(() => {
-    let cancelled = false;
-    const fetchExisting = async () => {
-      if (!formattedSellCarId) return;
-      try {
-        const res = await client.get('/api/view-defects-inspection', {
-          params: {sellCarId: formattedSellCarId},
-        });
-        if (cancelled) return;
-        const reports: any[] =
-          res.data?.data?.DefectsReport?.Reports?.Report || [];
-        if (Array.isArray(reports) && reports.length > 0) {
-          const mapped = reports.map(rep => ({
-            id: nanoid(),
-            uri: rep['Defect image'] || rep.defectImage || null,
-            remark: rep['Remark'] || rep.remark || '',
-          }));
-          if (mapped.length > 0) {
-            setItems(mapped);
-          }
-        }
-      } catch (err) {
-        console.warn('Failed to prefill defects', err);
+    if (!formattedSellCarId) return;
+    const inspId =
+      inspectionData?.data?.allInspections?.[0]?.id ||
+      inspectionData?.data?.id ||
+      draft?.inspectionId ||
+      '';
+    if (inspId) {
+      setInspectionId(inspId);
+    }
+
+    const reports: any[] =
+      defectsData?.data?.DefectsReport?.Reports?.Report || [];
+    const existingDeleted: string[] =
+      defectsData?.data?.deletedFiles ||
+      defectsData?.data?.DefectsReport?.deletedFiles ||
+      [];
+
+    const hasDraftItems =
+      draft?.items && draft.items.some(it => it.uri || it.remark);
+
+    if (!hasDraftItems && Array.isArray(reports) && reports.length > 0) {
+      const mapped = reports.map(rep => ({
+        id: nanoid(),
+        uri: rep['Defect image'] || rep.defectImage || null,
+        remark: rep['Remark'] || rep.remark || '',
+      }));
+      if (mapped.length > 0) {
+        setItems(mapped);
       }
-    };
-    fetchExisting();
-    return () => {
-      cancelled = true;
-    };
-  }, [formattedSellCarId]);
+    } else if (hasDraftItems) {
+      setItems(draft?.items || items);
+    }
+
+    if (
+      existingDeleted &&
+      Array.isArray(existingDeleted) &&
+      existingDeleted.length > 0
+    ) {
+      setDeletedFiles(existingDeleted.filter(Boolean));
+    } else if (draft?.deletedFiles) {
+      setDeletedFiles(draft.deletedFiles);
+    }
+  }, [formattedSellCarId, inspectionData, defectsData, draft]);
+
+  useEffect(() => {
+    if (!formattedSellCarId) return;
+    const snapshot = JSON.stringify({items, deletedFiles, inspectionId});
+    if (snapshot !== lastSavedRef.current) {
+      lastSavedRef.current = snapshot;
+      dispatch(
+        setDraft({
+          sellCarId: formattedSellCarId,
+          items,
+          deletedFiles,
+          inspectionId,
+        }),
+      );
+    }
+  }, [dispatch, formattedSellCarId, items, deletedFiles, inspectionId]);
 
   const resetAll = () => {
     setItems([{id: nanoid(), uri: null, remark: ''}]);
@@ -113,7 +168,17 @@ const DefectivePartsScreen = () => {
     const uri = resp.assets[0]?.uri;
     if (uri && targetId) {
       setItems(prev =>
-        prev.map(it => (it.id === targetId ? {...it, uri} : it)),
+        prev.map(it => {
+          if (it.id !== targetId) return it;
+          const prevUri = it.uri;
+          if (prevUri && (prevUri.startsWith('http://') || prevUri.startsWith('https://'))) {
+            setDeletedFiles(d => {
+              const next = [...d, prevUri].filter(Boolean);
+              return Array.from(new Set(next));
+            });
+          }
+          return {...it, uri};
+        }),
       );
     }
     setPickerVisible({open: false, id: null});
@@ -127,6 +192,16 @@ const DefectivePartsScreen = () => {
     setItems(prev => {
       if (prev.length === 1) {
         return prev; // keep at least one
+      }
+      const target = prev.find(it => it.id === id);
+      if (
+        target?.uri &&
+        (target.uri.startsWith('http://') || target.uri.startsWith('https://'))
+      ) {
+        setDeletedFiles(d => {
+          const next = [...d, target.uri as string].filter(Boolean);
+          return Array.from(new Set(next));
+        });
       }
       return prev.filter(it => it.id !== id);
     });
@@ -189,6 +264,40 @@ const DefectivePartsScreen = () => {
     </View>
   );
 
+  const handleSubmit = async () => {
+    setMessage(null);
+    if (!formattedSellCarId) {
+      setMessage('Missing sellCarId.');
+      return;
+    }
+    const anyWithImageOrRemark = items.some(it => it.uri || it.remark.trim());
+    if (!anyWithImageOrRemark) {
+      setMessage('Add at least one defect image or remark.');
+      return;
+    }
+    const missingRemark = items.find(it => it.uri && !it.remark.trim());
+    if (missingRemark) {
+      setMessage('Add a remark for each image.');
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      await addDefects({
+        sellCarId: formattedSellCarId,
+        inspectionId: inspectionId || formattedSellCarId,
+        items,
+        deletedFiles,
+      }).unwrap();
+      setMessage('Defective parts saved.');
+      navigation.navigate('InspectionModules', {sellCarId: formattedSellCarId});
+    } catch (err: any) {
+      setMessage(err?.message || 'Failed to save defective parts');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   return (
     <SafeAreaView style={styles.root}>
       <View style={styles.header}>
@@ -214,7 +323,8 @@ const DefectivePartsScreen = () => {
       <ScrollView
         style={{flex: 1}}
         contentContainerStyle={[styles.content, {paddingBottom: 140}]}
-        showsVerticalScrollIndicator={false}>
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled">
         <View style={styles.card}>
           <Text style={styles.title}>Defective pieces</Text>
           <Text style={styles.subtitle}>
@@ -237,112 +347,116 @@ const DefectivePartsScreen = () => {
 
       <View style={styles.footer}>
         <Pressable
-          style={styles.nextBtn}
-          onPress={() =>
-            navigation.navigate('InspectionModules', {
-              sellCarId: formattedSellCarId,
-            })
-          }
+          style={[styles.nextBtn, (submitting || saving || defectsLoading) && {opacity: 0.7}]}
+          onPress={handleSubmit}
+          disabled={submitting || saving || defectsLoading}
           android_ripple={{color: 'rgba(255,255,255,0.15)'}}>
-          <Text style={styles.nextLabel}>Next</Text>
+          <Text style={styles.nextLabel}>
+            {submitting || saving ? 'Saving...' : 'Save & Next'}
+          </Text>
         </Pressable>
+        {message ? <Text style={styles.helperText}>{message}</Text> : null}
       </View>
 
-      <Modal
-        visible={previewVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setPreviewVisible(false)}>
-        <View style={styles.previewOverlay}>
-          <Pressable
-            style={StyleSheet.absoluteFill}
-            onPress={() => setPreviewVisible(false)}
-          />
-          <View style={styles.previewContent}>
-            {previewUri ? (
-              <TapGestureHandler
-                ref={doubleTapRef}
-                numberOfTaps={2}
-                onActivated={() => {
-                  const next = lastScale.current > 1 ? 1 : 2;
-                  lastScale.current = next;
-                  baseScale.setValue(next);
-                  pinchScale.setValue(1);
-                }}>
-                <View style={{flex: 1}}>
-                  <PinchGestureHandler
-                    simultaneousHandlers={doubleTapRef}
-                    onGestureEvent={Animated.event(
-                      [{nativeEvent: {scale: pinchScale}}],
-                      {useNativeDriver: true},
-                    )}
-                    onHandlerStateChange={e => {
-                      if (
-                        e.nativeEvent.state === State.END ||
-                        e.nativeEvent.state === State.CANCELLED
-                      ) {
-                        const next =
-                          lastScale.current * (e.nativeEvent.scale || 1);
-                        const clamped = Math.min(Math.max(next, 1), 4);
-                        lastScale.current = clamped;
-                        baseScale.setValue(clamped);
-                        pinchScale.setValue(1);
-                      }
-                    }}>
-                    <Animated.View style={styles.previewImageWrap}>
-                      <Animated.Image
-                        source={{uri: previewUri}}
-                        style={[
-                          styles.previewImage,
-                          {transform: [{scale: combinedScale}]},
-                        ]}
-                        resizeMode="contain"
-                      />
-                    </Animated.View>
-                  </PinchGestureHandler>
-                </View>
-              </TapGestureHandler>
-            ) : null}
+      {previewVisible ? (
+        <Modal
+          visible
+          transparent
+          animationType="fade"
+          onRequestClose={() => setPreviewVisible(false)}>
+          <View style={styles.previewOverlay} pointerEvents="box-none">
             <Pressable
-              style={styles.previewClose}
-              onPress={() => setPreviewVisible(false)}>
-              <X size={16} color="#fff" strokeWidth={3} />
-            </Pressable>
-          </View>
-        </View>
-      </Modal>
-
-      <Modal
-        visible={pickerVisible.open}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setPickerVisible({open: false, id: null})}>
-        <View style={styles.pickerOverlay}>
-          <View style={styles.pickerSheet}>
-            <Text style={styles.pickerTitle}>Add photo</Text>
-            <Text style={styles.pickerSubtitle}>Choose source</Text>
-            <View style={styles.pickerActions}>
+              style={StyleSheet.absoluteFill}
+              onPress={() => setPreviewVisible(false)}
+            />
+            <View style={styles.previewContent}>
+              {previewUri ? (
+                <TapGestureHandler
+                  ref={doubleTapRef}
+                  numberOfTaps={2}
+                  onActivated={() => {
+                    const next = lastScale.current > 1 ? 1 : 2;
+                    lastScale.current = next;
+                    baseScale.setValue(next);
+                    pinchScale.setValue(1);
+                  }}>
+                  <View style={{flex: 1}}>
+                    <PinchGestureHandler
+                      simultaneousHandlers={doubleTapRef}
+                      onGestureEvent={Animated.event(
+                        [{nativeEvent: {scale: pinchScale}}],
+                        {useNativeDriver: true},
+                      )}
+                      onHandlerStateChange={e => {
+                        if (
+                          e.nativeEvent.state === State.END ||
+                          e.nativeEvent.state === State.CANCELLED
+                        ) {
+                          const next =
+                            lastScale.current * (e.nativeEvent.scale || 1);
+                          const clamped = Math.min(Math.max(next, 1), 4);
+                          lastScale.current = clamped;
+                          baseScale.setValue(clamped);
+                          pinchScale.setValue(1);
+                        }
+                      }}>
+                      <Animated.View style={styles.previewImageWrap}>
+                        <Animated.Image
+                          source={{uri: previewUri}}
+                          style={[
+                            styles.previewImage,
+                            {transform: [{scale: combinedScale}]},
+                          ]}
+                          resizeMode="contain"
+                        />
+                      </Animated.View>
+                    </PinchGestureHandler>
+                  </View>
+                </TapGestureHandler>
+              ) : null}
               <Pressable
-                style={styles.pickerBtn}
-                onPress={() => handlePick('camera')}>
-                <Text style={styles.pickerBtnText}>Camera</Text>
-              </Pressable>
-              <Pressable
-                style={styles.pickerBtn}
-                onPress={() => handlePick('library')}>
-                <Text style={styles.pickerBtnText}>Library</Text>
-              </Pressable>
-              <Pressable
-                style={[styles.pickerBtn, styles.pickerCancel]}
-                onPress={() => setPickerVisible({open: false, id: null})}>
-                <Text style={[styles.pickerBtnText, {color: '#b91c1c'}]}>
-                  Cancel
-                </Text>
+                style={styles.previewClose}
+                onPress={() => setPreviewVisible(false)}>
+                <X size={16} color="#fff" strokeWidth={3} />
               </Pressable>
             </View>
           </View>
-        </View>
-      </Modal>
+        </Modal>
+      ) : null}
+
+      {pickerVisible.open ? (
+        <Modal
+          visible
+          transparent
+          animationType="fade"
+          onRequestClose={() => setPickerVisible({open: false, id: null})}>
+          <View style={styles.pickerOverlay} pointerEvents="box-none">
+            <View style={styles.pickerSheet}>
+              <Text style={styles.pickerTitle}>Add photo</Text>
+              <Text style={styles.pickerSubtitle}>Choose source</Text>
+              <View style={styles.pickerActions}>
+                <Pressable
+                  style={styles.pickerBtn}
+                  onPress={() => handlePick('camera')}>
+                  <Text style={styles.pickerBtnText}>Camera</Text>
+                </Pressable>
+                <Pressable
+                  style={styles.pickerBtn}
+                  onPress={() => handlePick('library')}>
+                  <Text style={styles.pickerBtnText}>Library</Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.pickerBtn, styles.pickerCancel]}
+                  onPress={() => setPickerVisible({open: false, id: null})}>
+                  <Text style={[styles.pickerBtnText, {color: '#b91c1c'}]}>
+                    Cancel
+                  </Text>
+                </Pressable>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      ) : null}
     </SafeAreaView>
   );
 };
@@ -577,6 +691,12 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '700',
     color: '#ffffff',
+  },
+  helperText: {
+    marginTop: 8,
+    fontSize: 12,
+    color: '#b91c1c',
+    textAlign: 'center',
   },
   pickerOverlay: {
     flex: 1,

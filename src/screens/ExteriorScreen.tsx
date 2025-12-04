@@ -27,6 +27,7 @@ import {
 } from 'react-native-gesture-handler';
 import {client} from '../utils/apiClient';
 import {loadDraft, saveDraft} from '../utils/draftStorage';
+import {store} from '../store/store';
 
 type RouteParams = {
   sellCarId?: string | number;
@@ -130,6 +131,9 @@ const ExteriorScreen = () => {
   const [previewVisible, setPreviewVisible] = useState(false);
   const [previewUri, setPreviewUri] = useState<string | null>(null);
   const [prefillLoading, setPrefillLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [inspectionId, setInspectionId] = useState<string | number>('');
   const pinchScale = useRef(new Animated.Value(1)).current;
   const baseScale = useRef(new Animated.Value(1)).current;
   const lastScale = useRef(1);
@@ -192,6 +196,22 @@ const ExteriorScreen = () => {
         ...prev,
         [key]: {...prev[key], photoUri: uri},
       }));
+      const scratch = panelStates[key]?.status;
+      if (scratch) {
+        try {
+          await uploadPanelImage(key, uri, scratch);
+          setMessage('Panel updated.');
+        } catch (err: any) {
+          console.warn('[Exterior] upload failed', err?.message);
+          setMessage(
+            err?.response?.data?.message ||
+              err?.message ||
+              'Failed to upload panel',
+          );
+        }
+      } else {
+        setMessage('Select scratch status before uploading.');
+      }
     }
     setPickerVisible({open: false, panelKey: null});
   };
@@ -201,6 +221,7 @@ const ExteriorScreen = () => {
       ...prev,
       [panelKey]: {...prev[panelKey], status},
     }));
+    setMessage(null);
   };
 
   const resetAll = () => {
@@ -234,7 +255,30 @@ const ExteriorScreen = () => {
           return (
             <Pressable
               key={opt}
-              onPress={() => setPanelStatus(panelKey, opt)}
+              onPress={async () => {
+                setPanelStatus(panelKey, opt);
+            const state = panelStates[panelKey];
+            const uri = state?.photoUri;
+            if (opt) {
+              try {
+                    if (!uri) {
+                      setMessage('Add a photo before updating scratch.');
+                      return;
+                    }
+                    await uploadPanelImage(panelKey, uri, opt);
+                    setMessage('Panel updated.');
+              } catch (err: any) {
+                    console.warn('[Exterior] upload failed', err?.message);
+                    setMessage(
+                      err?.response?.data?.message ||
+                        err?.message ||
+                        'Failed to update panel',
+                    );
+                  }
+                } else {
+                  setMessage('Select scratch status before uploading.');
+                }
+              }}
               style={[
                 styles.scratchPill,
                 active
@@ -254,6 +298,156 @@ const ExteriorScreen = () => {
         })}
       </ScrollView>
     );
+  };
+
+  const uploadPanelImage = async (
+    panelName: string,
+    uri: string | null,
+    scratch: ScratchStatus,
+  ) => {
+    if (!scratch) {
+      throw new Error('Scratch is required for upload');
+    }
+    const resolvedIdNum = Number(inspectionId || formattedSellCarId);
+    if (Number.isNaN(resolvedIdNum)) {
+      throw new Error('Invalid inspection id');
+    }
+    let photoMeta: {uri: string; name: string; type: string; size?: number} | null = null;
+    console.log('[Exterior] upload payload', {
+      sellCarId: formattedSellCarId,
+      inspectionId: resolvedIdNum,
+      name: panelName,
+      scratch,
+    });
+    const uploadUrl = 'https://api.marnix.in/api/upload-image';
+    const token = store.getState().auth.token;
+
+    const fd = new FormData();
+    fd.append('sellCarId', formattedSellCarId);
+    fd.append('id', JSON.stringify(resolvedIdNum));
+    fd.append('name', JSON.stringify(panelName));
+    fd.append('scratch', scratch);
+
+    if (uri) {
+      const ext = uri.split('.').pop() || 'jpg';
+      const mime =
+        ext === 'png'
+          ? 'image/png'
+          : ext === 'jpeg' || ext === 'jpg'
+          ? 'image/jpeg'
+          : 'application/octet-stream';
+      const sanitizedName = panelName
+        .replace(/&/g, 'And')
+        .replace(/\s+/g, '');
+      const normalizedUri =
+        uri.startsWith('file://') || uri.startsWith('content://') ? uri : uri;
+      photoMeta = {
+        uri: normalizedUri,
+        name: `${sanitizedName}.${ext}`,
+        type: mime,
+      };
+      fd.append(panelName, photoMeta as any);
+    }
+
+    try {
+      const resp = await fetch(uploadUrl, {
+        method: 'POST',
+        headers: {
+          ...(token ? {Authorization: `Bearer ${token}`} : {}),
+          Accept: '*/*',
+        },
+        body: fd,
+      });
+      const text = await resp.text();
+      if (!resp.ok) {
+        console.error('[Exterior] fetch upload failed', {
+          status: resp.status,
+          statusText: resp.statusText,
+          body: text,
+        });
+        throw new Error(text || `Upload failed (${resp.status})`);
+      } else {
+        console.log('[Exterior] upload success', text || resp.status);
+      }
+    } catch (err: any) {
+      console.error('[Exterior] upload failed', err?.message);
+      throw err;
+    }
+  };
+
+  const handleSubmit = async () => {
+    setMessage(null);
+    if (!formattedSellCarId) {
+      setMessage('Missing sellCarId.');
+      return;
+    }
+    const missingPanels = PANELS.filter(
+      p => !panelStates[p]?.photoUri || !panelStates[p]?.status,
+    );
+    if (missingPanels.length > 0) {
+      setMessage(`Add photo + scratch for: ${missingPanels[0]}`);
+      return;
+    }
+    const missingTyre = TYRE_POSITIONS.find(pos => !tyreValues[pos]);
+    if (missingTyre) {
+      setMessage(`Select tyre value for ${missingTyre}`);
+      return;
+    }
+    if (!wheelType) {
+      setMessage('Select wheel type');
+      return;
+    }
+    if (!tyreRefurbCost || !exteriorRefurbCost) {
+      setMessage('Enter refurbishment costs');
+      return;
+    }
+    if (!repaintDone) {
+      setMessage('Select repaint done?');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const reports: Record<string, any> = {
+        'Tyre Thread Count': {...tyreValues},
+        'Wheel Type': wheelType,
+        'Repaint Done': repaintDone,
+        'Refurbishment Cost (Tyre)': tyreRefurbCost || '0',
+        'Exterior Refurbishment Cost': exteriorRefurbCost || '0',
+      };
+
+      const fd = new FormData();
+      fd.append('id', String(inspectionId || formattedSellCarId));
+      fd.append('sellCarId', formattedSellCarId);
+      fd.append('Reports', JSON.stringify(reports));
+
+      const token = store.getState().auth.token;
+      await client.post('/api/add-exterior-inspection', fd, {
+        headers: {
+          ...(token ? {Authorization: `Bearer ${token}`} : {}),
+          Accept: '*/*',
+        },
+        transformRequest: data => data,
+      });
+
+      setMessage(null);
+      saveDraft(formattedSellCarId, 'exterior', {
+        panels: panelStates,
+        tyreValues,
+        wheelType,
+        tyreRefurbCost,
+        exteriorRefurbCost,
+        repaintDone,
+      });
+      navigation.navigate('ElectricalInterior', {sellCarId: formattedSellCarId});
+    } catch (err: any) {
+      setMessage(
+        err?.response?.data?.message ||
+          err?.message ||
+          'Failed to upload exterior images',
+      );
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const renderTyrePicker = (position: string) => {
@@ -403,6 +597,9 @@ const ExteriorScreen = () => {
           return;
         }
         const existing = res.data?.data?.allInspections?.[0];
+        if (existing?.id != null) {
+          setInspectionId(existing.id);
+        }
         const exteriorData =
           existing?.exterior || existing?.Exterior || existing?.ExteriorInspection;
         if (!exteriorData || typeof exteriorData !== 'object') {
@@ -615,9 +812,13 @@ const ExteriorScreen = () => {
                   <Text style={styles.panelLabel}>{panel}</Text>
                   <Pressable
                     style={styles.photoTile}
-                    onPress={() =>
-                      setPickerVisible({open: true, panelKey: panel})
-                    }>
+                    onPress={() => {
+                      if (!panelStates[panel]?.status) {
+                        setMessage(`Select scratch status for ${panel} first.`);
+                        return;
+                      }
+                      setPickerVisible({open: true, panelKey: panel});
+                    }}>
                     {state.photoUri ? (
                       <>
                         <Image
@@ -741,8 +942,16 @@ const ExteriorScreen = () => {
             })}
           </View>
 
-          <Pressable style={styles.nextBtn} onPress={() => navigation.goBack()}>
-            <Text style={styles.nextLabel}>Next</Text>
+          {message ? (
+            <Text style={styles.helperText}>{message}</Text>
+          ) : null}
+          <Pressable
+            style={[styles.nextBtn, submitting && {opacity: 0.7}]}
+            onPress={handleSubmit}
+            disabled={submitting}>
+            <Text style={styles.nextLabel}>
+              {submitting ? 'Uploading...' : 'Next'}
+            </Text>
           </Pressable>
         </View>
         )}

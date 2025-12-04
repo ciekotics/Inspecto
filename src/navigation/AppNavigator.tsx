@@ -7,7 +7,7 @@ import HomeScreen from '../screens/HomeScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 import CalendarScreen from '../screens/CalendarScreen';
 import InspectionScreen from '../screens/InspectionScreen';
-import VehicleDetailsScreen from '../screens/VehicleDetailsScreen';
+import VehicleDetailsWizardScreen from '../screens/VehicleDetailsWizardScreen';
 import EngineInspectionScreen from '../screens/EngineInspectionScreen';
 import FunctionsInspectionScreen from '../screens/FunctionsInspectionScreen';
 import FramesInspectionScreen from '../screens/FramesInspectionScreen';
@@ -35,8 +35,16 @@ export default function AppNavigator() {
         />
         <Stack.Screen name="Home" component={HomeScreen} />
         <Stack.Screen name="Calendar" component={CalendarScreen} />
-        <Stack.Screen name="EngineInfo" component={VehicleDetailsScreen} />
-        <Stack.Screen name="VehicleDetails" component={VehicleDetailsScreen} />
+        <Stack.Screen name="EngineInfo" component={VehicleDetailsWizardScreen} />
+        <Stack.Screen name="VehicleDetails" component={VehicleDetailsWizardScreen} />
+        <Stack.Screen
+          name="VehicleDetailsStep1B"
+          component={VehicleDetailsWizardScreen}
+        />
+        <Stack.Screen
+          name="VehicleDetailsStep1C"
+          component={VehicleDetailsWizardScreen}
+        />
         <Stack.Screen name="EngineInspection" component={EngineInspectionScreen} />
         <Stack.Screen name="FunctionsInspection" component={FunctionsInspectionScreen} />
         <Stack.Screen name="FramesInspection" component={FramesInspectionScreen} />

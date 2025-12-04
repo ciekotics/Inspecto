@@ -20,13 +20,13 @@ type RouteParams = {
 
 type DrivingExperience = 'Excellent' | 'Good' | 'Average' | 'Others' | '';
 type Problem =
-  | 'No Problem'
+  'No Problem'
   | 'Engine'
   | 'Clutch'
   | 'Gear Shifting'
   | 'Suspension'
   | 'Brakes'
-  | '';
+  | 'Others';
 type IncompleteReason = 'Issue with vehicle' | 'Customer denied' | 'Others' | '';
 
 const TestDriveScreen = () => {
@@ -36,23 +36,26 @@ const TestDriveScreen = () => {
   const formattedSellCarId =
     sellCarId == null ? '' : String(sellCarId).trim();
 
+  const [inspectionId, setInspectionId] = useState<string | number>('');
   const [isComplete, setIsComplete] = useState(false);
   const [drivingExperience, setDrivingExperience] =
     useState<DrivingExperience>('');
-  const [problem, setProblem] = useState<Problem>('');
+  const [problems, setProblems] = useState<Problem[]>([]);
   const [incompleteReason, setIncompleteReason] =
     useState<IncompleteReason>('');
   const [remarks, setRemarks] = useState('');
   const [kmsDriven, setKmsDriven] = useState('');
   const [timeTaken, setTimeTaken] = useState('');
   const [prefillLoading, setPrefillLoading] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
   const requiredCount = useMemo(() => (isComplete ? 4 : 3), [isComplete]);
 
   const filledCount = useMemo(() => {
     let count = 0;
     if (drivingExperience) count += 1;
-    if (problem) count += 1;
+    if (problems.length > 0) count += 1;
     if (isComplete) {
       if (kmsDriven) count += 1;
       if (timeTaken) count += 1;
@@ -60,12 +63,12 @@ const TestDriveScreen = () => {
       if (incompleteReason) count += 1;
     }
     return count;
-  }, [drivingExperience, problem, isComplete, kmsDriven, timeTaken, incompleteReason]);
+  }, [drivingExperience, problems, isComplete, kmsDriven, timeTaken, incompleteReason]);
 
   const resetAll = () => {
     setIsComplete(false);
     setDrivingExperience('');
-    setProblem('');
+    setProblems([]);
     setIncompleteReason('');
     setRemarks('');
     setKmsDriven('');
@@ -116,6 +119,10 @@ const TestDriveScreen = () => {
       const applyData = (td: any) => {
         if (!td || typeof td !== 'object') return false;
         let applied = false;
+        if (td.id != null) {
+          setInspectionId(td.id);
+          applied = true;
+        }
         const completeVal = pickFrom(td, [
           'Test Drive Completed',
           'isComplete',
@@ -147,13 +154,20 @@ const TestDriveScreen = () => {
             'problem',
             'Test Drive Issue',
           ]);
-          if (Array.isArray(val)) {
-            return val[0];
-          }
           return val;
         })();
         if (rawProblem !== undefined) {
-          setProblem(normProblem(rawProblem) || String(rawProblem));
+          if (Array.isArray(rawProblem)) {
+            const normalized = rawProblem
+              .map(p => normProblem(p) || String(p))
+              .filter(Boolean) as Problem[];
+            setProblems(normalized);
+          } else {
+            const single = normProblem(rawProblem) || String(rawProblem);
+            if (single) {
+              setProblems([single as Problem]);
+            }
+          }
           applied = true;
         }
         const reason = pickFrom(td, [
@@ -256,8 +270,9 @@ const TestDriveScreen = () => {
     if (!formattedSellCarId) return;
     const payload = {
       isComplete,
+      testDriveCompleted: isComplete,
       drivingExperience,
-      problem,
+      problems,
       incompleteReason,
       remarks,
       kmsDriven,
@@ -268,7 +283,7 @@ const TestDriveScreen = () => {
     formattedSellCarId,
     isComplete,
     drivingExperience,
-    problem,
+    problems,
     incompleteReason,
     remarks,
     kmsDriven,
@@ -303,6 +318,69 @@ const TestDriveScreen = () => {
       })}
     </View>
   );
+
+  const handleSubmit = async () => {
+    setMessage(null);
+    if (!formattedSellCarId) {
+      setMessage('Missing sellCarId.');
+      return;
+    }
+    if (!drivingExperience) {
+      setMessage('Select driving experience.');
+      return;
+    }
+    if (!problems.length) {
+      setMessage('Select at least one problem.');
+      return;
+    }
+    if (isComplete) {
+      if (!kmsDriven) {
+        setMessage("Enter Km's Driven.");
+        return;
+      }
+      if (!timeTaken) {
+        setMessage('Enter Time Taken.');
+        return;
+      }
+    } else {
+      if (!incompleteReason) {
+        setMessage('Select incomplete reason.');
+        return;
+      }
+    }
+
+    setSubmitting(true);
+    try {
+      const reports = {
+        'Test Drive Completed': isComplete,
+        'Drive Details': {
+          'Km Driven': kmsDriven,
+          'Time Taken': timeTaken,
+        },
+        'Driving Experience': drivingExperience,
+        Problem: problems,
+        'Incomplete Test Drive': isComplete ? '' : incompleteReason,
+        'Additional Remarks': remarks,
+      };
+
+      await client.post('/api/add-test-drive', {
+        id: inspectionId || formattedSellCarId,
+        sellCarId: formattedSellCarId,
+        Reports: reports,
+      });
+
+      setMessage('Test Drive saved.');
+      navigation.navigate('EngineInspection', {sellCarId: formattedSellCarId});
+    } catch (err: any) {
+      setMessage(
+        err?.response?.data?.message ||
+          err?.message ||
+          'Failed to save test drive',
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   return (
     <SafeAreaView style={styles.root}>
@@ -386,14 +464,44 @@ const TestDriveScreen = () => {
             setDrivingExperience,
           )}
 
-          <Text style={[styles.sectionTitle, {marginTop: 16}]}>
-            Specify the Problem *
+          <Text style={[styles.sectionTitle, {marginTop: 8}]}>
+            Select Problems *
           </Text>
-          {renderPills(
-            ['No Problem', 'Engine', 'Clutch', 'Gear Shifting', 'Suspension', 'Brakes'],
-            problem,
-            setProblem,
-          )}
+          <View style={styles.pillWrap}>
+            {(
+              ['No Problem', 'Engine', 'Clutch', 'Gear Shifting', 'Suspension', 'Brakes'] as Problem[]
+            ).map(opt => {
+              const active = problems.includes(opt);
+              const toggle = () => {
+                setProblems(prev => {
+                  if (active) {
+                    return prev.filter(p => p !== opt);
+                  }
+                  if (opt === 'No Problem') {
+                    return ['No Problem'];
+                  }
+                  return [...prev.filter(p => p !== 'No Problem'), opt];
+                });
+              };
+              return (
+                <Pressable
+                  key={opt}
+                  onPress={toggle}
+                  style={[
+                    styles.pill,
+                    active ? styles.pillActive : styles.pillInactive,
+                  ]}>
+                  <Text
+                    style={[
+                      styles.pillText,
+                      active ? styles.pillTextActive : null,
+                    ]}>
+                    {opt}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
 
           {isComplete ? (
             <>
@@ -452,11 +560,15 @@ const TestDriveScreen = () => {
           />
 
           <Pressable
-            style={styles.nextBtn}
-            onPress={() => navigation.goBack()}
+            style={[styles.nextBtn, submitting && {opacity: 0.7}]}
+            onPress={handleSubmit}
+            disabled={submitting}
             android_ripple={{color: 'rgba(255,255,255,0.15)'}}>
-            <Text style={styles.nextLabel}>Next</Text>
+            <Text style={styles.nextLabel}>
+              {submitting ? 'Saving...' : 'Save & Next'}
+            </Text>
           </Pressable>
+          {message ? <Text style={styles.helperText}>{message}</Text> : null}
         </View>
         )}
       </ScrollView>
@@ -676,6 +788,11 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '700',
     color: '#ffffff',
+  },
+  helperText: {
+    marginTop: 10,
+    fontSize: 12,
+    color: '#b91c1c',
   },
   skeletonBlock: {
     backgroundColor: '#e5e7eb',

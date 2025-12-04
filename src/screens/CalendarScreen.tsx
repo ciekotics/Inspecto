@@ -29,7 +29,6 @@ type CalendarSlot = {
 };
 
 const WEEKDAYS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
-const MONTH_DAYS = Array.from({length: 30}, (_, i) => i + 1);
 
 const MONTH_LABELS_FULL = [
   'January',
@@ -97,6 +96,17 @@ export default function CalendarScreen() {
   const dispatch = useAppDispatch();
   const monthAnim = React.useRef(new Animated.Value(0)).current;
   const detailAnim = React.useRef(new Animated.Value(0)).current;
+  const monthDays = useMemo(() => {
+    const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+    return Array.from({length: daysInMonth}, (_, i) => i + 1);
+  }, [currentMonth, currentYear]);
+
+  useEffect(() => {
+    const maxDay = monthDays[monthDays.length - 1] || TODAY_DAY;
+    if (selectedDay > maxDay) {
+      setSelectedDay(maxDay);
+    }
+  }, [monthDays, selectedDay]);
 
   const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -682,7 +692,7 @@ export default function CalendarScreen() {
               ))}
             </View>
             <View style={styles.dateGrid}>
-              {MONTH_DAYS.map(day => {
+              {monthDays.map(day => {
                 if (loading) {
                   return (
                     <View key={day} style={styles.dateCell}>

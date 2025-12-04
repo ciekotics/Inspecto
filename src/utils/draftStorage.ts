@@ -1,7 +1,5 @@
-import {MMKV} from 'react-native-mmkv';
-
-const storage = new MMKV({id: 'inspection_drafts'});
-const prefix = 'inspection_draft';
+import {store} from '../store/store';
+import {setDraft as setDraftAction, clearDraft as clearDraftAction} from '../store/slices/formDraftsSlice';
 
 export type DraftModule =
   | 'vehicleDetails'
@@ -14,45 +12,37 @@ export type DraftModule =
   | 'refurbishment'
   | 'defective';
 
-const keyFor = (sellCarId: string | number, module: DraftModule) =>
-  `${prefix}:${module}:${sellCarId}`;
-
 export function saveDraft(
   sellCarId: string | number,
   module: DraftModule,
   data: any,
 ) {
-  try {
-    const key = keyFor(sellCarId, module);
-    storage.set(key, JSON.stringify(data ?? {}));
-  } catch (err) {
-    console.warn('Failed to save draft', module, err);
-  }
+  if (!sellCarId) return;
+  store.dispatch(
+    setDraftAction({
+      sellCarId: String(sellCarId),
+      module,
+      data: data ?? {},
+    }),
+  );
 }
 
 export function loadDraft<T = any>(
   sellCarId: string | number,
   module: DraftModule,
 ): T | null {
-  try {
-    const key = keyFor(sellCarId, module);
-    const raw = storage.getString(key);
-    if (!raw) return null;
-    return JSON.parse(raw) as T;
-  } catch (err) {
-    console.warn('Failed to load draft', module, err);
-    return null;
-  }
+  const state = store.getState() as any;
+  return (
+    (state?.formDrafts?.[String(sellCarId)]?.[module] as T | undefined) || null
+  );
 }
 
 export function clearDraft(
   sellCarId: string | number,
   module: DraftModule,
 ) {
-  try {
-    const key = keyFor(sellCarId, module);
-    storage.delete(key);
-  } catch (err) {
-    console.warn('Failed to clear draft', module, err);
-  }
+  if (!sellCarId) return;
+  store.dispatch(
+    clearDraftAction({sellCarId: String(sellCarId), module}),
+  );
 }

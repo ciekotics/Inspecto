@@ -37,6 +37,7 @@ import {
 import DiscreteSlider from '../components/DiscreteSlider';
 import {client} from '../utils/apiClient';
 import {loadDraft, saveDraft} from '../utils/draftStorage';
+import {store} from '../store/store';
 
 type RouteParams = {
   sellCarId?: string | number;
@@ -45,7 +46,12 @@ type RouteParams = {
 type YesNo = 'Yes' | 'No' | '';
 type YesNoNA = 'Yes' | 'No' | 'N/A' | '';
 type Effectiveness = 'Effective' | 'Not Effective' | 'AC Not Available' | '';
-type GrillEfficiency = 'Bad' | 'Average' | 'Excellent' | '';
+type GrillEfficiency = 'Bad (>14°c)' | 'Average (7-14°c)' | 'Excellent (<=7°c)' | '';
+const GRILL_ALLOWED = {
+  Bad: 'Bad (>14°c)',
+  Average: 'Average (7-14°c)',
+  Excellent: 'Excellent (<=7°c)',
+} as const;
 type Count024 = '0' | '2' | '4' | '';
 
 const ElectricalInteriorScreen = () => {
@@ -54,6 +60,8 @@ const ElectricalInteriorScreen = () => {
   const {sellCarId} = (route.params as RouteParams) || {};
   const formattedSellCarId =
     sellCarId == null ? '' : String(sellCarId).trim();
+
+  const [inspectionId, setInspectionId] = useState<string | number>('');
 
   const [seatCover, setSeatCover] = useState<YesNo>('');
   const [sunRoof, setSunRoof] = useState<YesNo>('');
@@ -70,6 +78,7 @@ const ElectricalInteriorScreen = () => {
   const [headLamp, setHeadLamp] = useState<YesNo>('');
   const [tailLamp, setTailLamp] = useState<YesNo>('');
   const [fogLamp, setFogLamp] = useState<YesNo>('');
+  const [cabinLight, setCabinLight] = useState<YesNo>('');
   const [blinkerLight, setBlinkerLight] = useState<YesNo>('');
   const [seatBelts, setSeatBelts] = useState<YesNo>('');
 
@@ -104,6 +113,9 @@ const ElectricalInteriorScreen = () => {
       | null;
   }>({open: false, target: null});
 
+  const [message, setMessage] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
   const [previewVisible, setPreviewVisible] = useState(false);
   const [previewUri, setPreviewUri] = useState<string | null>(null);
   const [prefillLoading, setPrefillLoading] = useState(false);
@@ -125,6 +137,7 @@ const ElectricalInteriorScreen = () => {
       'headLamp',
       'tailLamp',
       'fogLamp',
+      'cabinLight',
       'blinkerLight',
       'seatBelts',
     ];
@@ -163,6 +176,7 @@ const ElectricalInteriorScreen = () => {
       headLamp,
       tailLamp,
       fogLamp,
+      cabinLight,
       blinkerLight,
       seatBelts,
     ].forEach(v => {
@@ -205,6 +219,7 @@ const ElectricalInteriorScreen = () => {
     headLamp,
     tailLamp,
     fogLamp,
+    cabinLight,
     blinkerLight,
     seatBelts,
     acEffectiveness,
@@ -254,15 +269,20 @@ const ElectricalInteriorScreen = () => {
       const v = (val || '').toString().trim().toLowerCase();
       if (v.includes('ac not') || v === 'na' || v === 'n/a')
         return 'AC Not Available';
-      if (v.includes('not') || v.includes('non')) return 'Not Effective';
+      if (v.includes('not') || v.includes('non')) return 'Non-Effective';
       if (v.includes('effective')) return 'Effective';
       return '';
     };
     const normGrill = (val: any): GrillEfficiency => {
       const v = (val || '').toString().trim().toLowerCase();
-      if (v.startsWith('bad')) return 'Bad';
-      if (v.startsWith('avg') || v.startsWith('average')) return 'Average';
-      if (v.startsWith('excel') || v.startsWith('good')) return 'Excellent';
+      if (v.startsWith('bad')) return GRILL_ALLOWED.Bad;
+      if (v.startsWith('avg') || v.startsWith('average'))
+        return GRILL_ALLOWED.Average;
+      if (v.startsWith('excel') || v.startsWith('good'))
+        return GRILL_ALLOWED.Excellent;
+      if (v.includes('>14')) return GRILL_ALLOWED.Bad;
+      if (v.includes('7-14')) return GRILL_ALLOWED.Average;
+      if (v.includes('<=7') || v.includes('7°')) return GRILL_ALLOWED.Excellent;
       return '';
     };
     const normCount024 = (val: any): Count024 => {
@@ -288,6 +308,7 @@ const ElectricalInteriorScreen = () => {
         setHeadLamp(draft.headLamp || '');
         setTailLamp(draft.tailLamp || '');
         setFogLamp(draft.fogLamp || '');
+        setCabinLight(draft.cabinLight || '');
         setBlinkerLight(draft.blinkerLight || '');
         setSeatBelts(draft.seatBelts || '');
         setAcEffectiveness(draft.acEffectiveness || '');
@@ -320,6 +341,9 @@ const ElectricalInteriorScreen = () => {
         });
         if (cancelled) return;
         const existing = res.data?.data?.allInspections?.[0];
+        if (existing?.id != null) {
+          setInspectionId(existing.id);
+        }
         const interiorData =
           existing?.interior ||
           existing?.Interior ||
@@ -420,6 +444,7 @@ const ElectricalInteriorScreen = () => {
         setWorking(setHeadLamp, ['Head Lamp', 'headLamp']);
         setWorking(setTailLamp, ['Tail Lamp', 'tailLamp']);
         setWorking(setFogLamp, ['Fog Lamp', 'fogLamp']);
+        setWorking(setCabinLight, ['Cabin Light', 'cabinLight']);
         setWorking(setBlinkerLight, ['Blinker Light', 'blinkerLight']);
         setWorking(setSeatBelts, ['Seat Belts', 'seatBelts']);
 
@@ -555,6 +580,7 @@ const ElectricalInteriorScreen = () => {
       headLamp,
       tailLamp,
       fogLamp,
+      cabinLight,
       blinkerLight,
       seatBelts,
       acEffectiveness,
@@ -624,6 +650,7 @@ const ElectricalInteriorScreen = () => {
     setHeadLamp('');
     setTailLamp('');
     setFogLamp('');
+    setCabinLight('');
     setBlinkerLight('');
     setSeatBelts('');
     setAcEffectiveness('');
@@ -780,6 +807,216 @@ const ElectricalInteriorScreen = () => {
     </View>
   );
 
+  const appendFileToFormData = async (
+    fd: FormData,
+    fieldName: string,
+    uri: string,
+  ) => {
+    const ext = uri.split('.').pop() || 'jpg';
+    const mime =
+      ext === 'png'
+        ? 'image/png'
+        : ext === 'jpeg' || ext === 'jpg'
+        ? 'image/jpeg'
+        : 'application/octet-stream';
+    const isRemote = uri.startsWith('http://') || uri.startsWith('https://');
+    if (isRemote) {
+      const res = await fetch(uri);
+      const blob = await res.blob();
+      const typedBlob =
+        blob.type && blob.type.length > 0
+          ? blob
+          : new Blob([blob], {type: mime || 'application/octet-stream'});
+      (typedBlob as any).name = `${fieldName}.${ext}`;
+      fd.append(fieldName, typedBlob as any);
+    } else {
+      const normalizedUri =
+        uri.startsWith('file://') || uri.startsWith('content://') ? uri : uri;
+      fd.append(fieldName, {
+        uri: normalizedUri,
+        name: `${fieldName}.${ext}`,
+        type: mime,
+      } as any);
+    }
+  };
+
+  const handleSubmit = async () => {
+    setMessage(null);
+    if (!formattedSellCarId) {
+      setMessage('Missing sellCarId.');
+      return;
+    }
+    const token = store.getState().auth.token;
+
+    const normalizeGrillForSubmit = (val: string): GrillEfficiency => {
+      if (Object.values(GRILL_ALLOWED).includes(val as GrillEfficiency)) {
+        return val as GrillEfficiency;
+      }
+      const v = (val || '').toString().toLowerCase();
+      if (v.startsWith('bad') || v.includes('>14')) return GRILL_ALLOWED.Bad;
+      if (v.startsWith('avg') || v.startsWith('average') || v.includes('7-14'))
+        return GRILL_ALLOWED.Average;
+      if (v.startsWith('excel') || v.startsWith('good') || v.includes('<=7') || v.includes('7°'))
+        return GRILL_ALLOWED.Excellent;
+      return '';
+    };
+    const acGrillValue = normalizeGrillForSubmit(acGrillEfficiency);
+
+    const requiredYN = [
+      {label: 'Seat Cover', val: seatCover},
+      {label: 'Sun Roof', val: sunRoof},
+      {label: 'Car Antenna', val: carAntenna},
+      {label: 'Power Windows count', val: powerWindowsCount},
+    ];
+    const requiredWorking: {label: string; val: YesNo}[] = [
+      {label: 'Power Windows', val: powerWindowsWorking},
+      {label: 'Air Bags', val: airBagsWorking},
+      {label: 'Parking Brake Lever', val: parkingBrake},
+      {label: 'Horn', val: horn},
+      {label: 'Instrument Cluster', val: instrumentCluster},
+      {label: 'Wiper', val: wiper},
+      {label: 'Head Lamp', val: headLamp},
+      {label: 'Tail Lamp', val: tailLamp},
+      {label: 'Fog Lamp', val: fogLamp},
+      {label: 'Cabin Light', val: cabinLight},
+      {label: 'Seat Belts', val: seatBelts},
+    ];
+    const requiredAdvanced: {label: string; val: YesNoNA | Effectiveness | GrillEfficiency}[] =
+      [
+        {label: 'AC Effectiveness', val: acEffectiveness},
+        {label: 'AC Grill Efficiency', val: acGrillValue},
+        {label: 'Climate Control AC', val: climateControlAC},
+        {label: 'Heater', val: heater},
+        {label: 'ORVM', val: orvm},
+        {label: 'Steering Mounted Controls', val: steeringMounted},
+        {label: 'ABS', val: abs},
+        {label: 'Reverse Parking Sensors', val: reverseSensors},
+        {label: 'Reverse Camera', val: reverseCamera},
+        {label: 'Keyless/Center Locking', val: keylessLocking},
+        {label: 'Music System', val: musicSystemWorking},
+      ];
+
+    const missingYN = requiredYN.find(item => !item.val);
+    if (missingYN) {
+      setMessage(`Select ${missingYN.label}`);
+      return;
+    }
+    const missingWork = requiredWorking.find(item => !item.val);
+    if (missingWork) {
+      setMessage(`Select ${missingWork.label}`);
+      return;
+    }
+    const missingAdv = requiredAdvanced.find(item => !item.val);
+    if (missingAdv) {
+      setMessage(`Select ${missingAdv.label}`);
+      return;
+    }
+    if (!odometerImageUri) {
+      setMessage('Add odometer image.');
+      return;
+    }
+    if (!interiorImages.filter(Boolean).length) {
+      setMessage('Add at least one interior image.');
+      return;
+    }
+    if (!refurbishmentCost) {
+      setMessage('Enter refurbishment cost.');
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const acEffReport =
+        acEffectiveness === 'Not Effective'
+          ? 'Non-Effective'
+          : acEffectiveness;
+
+      const reports = {
+        available: {
+          'Seat Cover': seatCover,
+          'Sun Roof': sunRoof,
+          'Car Antenna': carAntenna,
+          'No. of Power Windows': powerWindowsCount,
+          'No. of Airbags': String(airBagsCount),
+        },
+        working: {
+          'Power Windows': powerWindowsWorking,
+          'Air Bags': airBagsWorking,
+          'Parking Brake Lever': parkingBrake,
+          Horn: horn,
+          'Instrument Cluster': instrumentCluster,
+          Wiper: wiper,
+          'Head Lamp': headLamp,
+          'Tail Lamp': tailLamp,
+          'Fog Lamp': fogLamp,
+          'Cabin Light': cabinLight,
+          'Blinker Light': blinkerLight,
+          'Seat Belts': seatBelts,
+        },
+        'AC Effectiveness': acEffReport,
+        'AC Grill Efficiency': acGrillValue,
+        'Climate Control AC': climateControlAC,
+        Heater: heater,
+        ORVM: orvm,
+        'Steering Mounted Controls': steeringMounted,
+        ABS: abs,
+        'Reverse Parking Sensors': reverseSensors,
+        'Reverse Camera': reverseCamera,
+        'Keyless/Center Locking': keylessLocking,
+        'Keyless/Center Locking Details': '',
+        'Music System': musicSystemWorking,
+        'Music System Details': musicSystemDetails,
+        'Odometer image': '',
+        'Interior images': [],
+        'Refurbishment Cost':
+          refurbishmentCost === '' ? '0' : refurbishmentCost,
+      };
+
+      const fd = new FormData();
+      fd.append('id', String(inspectionId || formattedSellCarId));
+      fd.append('sellCarId', formattedSellCarId);
+      fd.append('Reports', JSON.stringify(reports));
+      fd.append('deletedFiles', JSON.stringify([]));
+
+      if (odometerImageUri) {
+        await appendFileToFormData(fd, 'odometer', odometerImageUri);
+      }
+      for (let i = 0; i < interiorImages.length; i += 1) {
+        const uri = interiorImages[i];
+        if (uri) {
+          await appendFileToFormData(fd, `interior${i + 1}`, uri);
+        }
+      }
+
+      const resp = await fetch(
+        `https://api.marnix.in/api/add-electrical-and-interior-inspection`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: token ? `Bearer ${token}` : '',
+            Accept: '*/*',
+          },
+          body: fd,
+        },
+      );
+      const text = await resp.text();
+      if (!resp.ok) {
+        console.error('[Electrical] upload failed', {
+          status: resp.status,
+          statusText: resp.statusText,
+          body: text,
+        });
+        throw new Error(text || 'Failed to save electrical + interior');
+      }
+      setMessage('Electrical + Interior saved.');
+      navigation.navigate('TestDrive', {sellCarId: formattedSellCarId});
+    } catch (err: any) {
+      setMessage(err?.message || 'Failed to save electrical + interior');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const renderSkeleton = () => (
     <View style={styles.card}>
       <View style={[styles.skeletonBlock, {width: 180, height: 16}]} />
@@ -858,6 +1095,7 @@ const ElectricalInteriorScreen = () => {
           {renderToggle('Head Lamp *', headLamp, setHeadLamp)}
           {renderToggle('Tail Lamp *', tailLamp, setTailLamp)}
           {renderToggle('Fog Lamp *', fogLamp, setFogLamp)}
+          {renderToggle('Cabin Light *', cabinLight, setCabinLight)}
           {renderToggle('Blinker Light *', blinkerLight, setBlinkerLight)}
           {renderToggle('Seat Belts *', seatBelts, setSeatBelts)}
 
@@ -868,13 +1106,17 @@ const ElectricalInteriorScreen = () => {
             'AC Effectiveness *',
             acEffectiveness,
             setAcEffectiveness,
-            ['Effective', 'Not Effective', 'AC Not Available'],
+            ['Effective', 'Non-Effective', 'AC Not Available'],
           )}
           {renderToggle(
             'AC Grill Efficiency *',
             acGrillEfficiency,
             setAcGrillEfficiency,
-            ['Bad', 'Average', 'Excellent'],
+            [
+              GRILL_ALLOWED.Bad,
+              GRILL_ALLOWED.Average,
+              GRILL_ALLOWED.Excellent,
+            ],
           )}
           {renderToggle(
             'Climate Control AC *',
@@ -961,11 +1203,15 @@ const ElectricalInteriorScreen = () => {
           />
 
           <Pressable
-            style={styles.nextBtn}
-            onPress={() => navigation.goBack()}
+            style={[styles.nextBtn, submitting && {opacity: 0.7}]}
+            onPress={handleSubmit}
+            disabled={submitting}
             android_ripple={{color: 'rgba(255,255,255,0.15)'}}>
-            <Text style={styles.nextLabel}>Next</Text>
+            <Text style={styles.nextLabel}>
+              {submitting ? 'Saving...' : 'Save & Next'}
+            </Text>
           </Pressable>
+          {message ? <Text style={styles.helperText}>{message}</Text> : null}
         </View>
         )}
       </ScrollView>
@@ -1409,5 +1655,10 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.6)',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  helperText: {
+    marginTop: 10,
+    fontSize: 12,
+    color: '#b91c1c',
   },
 });

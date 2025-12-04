@@ -13,6 +13,7 @@ import {ChevronLeft} from 'lucide-react-native';
 import {PRIMARY} from '../utils/theme';
 import {loadDraft, saveDraft} from '../utils/draftStorage';
 import {client} from '../utils/apiClient';
+import {store} from '../store/store';
 
 type RouteParams = {
   sellCarId?: string | number;
@@ -27,6 +28,7 @@ const FunctionsInspectionScreen = () => {
   const formattedSellCarId =
     sellCarId == null ? '' : String(sellCarId).trim();
 
+  const [inspectionId, setInspectionId] = useState<string | number>('');
   const [steering, setSteering] = useState<YesNo>('');
   const [suspension, setSuspension] = useState<YesNo>('');
   const [brake, setBrake] = useState<YesNo>('');
@@ -43,8 +45,10 @@ const FunctionsInspectionScreen = () => {
   const [otherComments, setOtherComments] = useState('');
   const [refurbCost, setRefurbCost] = useState('');
   const [prefillLoading, setPrefillLoading] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
-  const requiredCount = useMemo(() => 10, []);
+  const requiredCount = useMemo(() => 11, []);
 
   const filledCount = useMemo(() => {
     let count = 0;
@@ -62,6 +66,7 @@ const FunctionsInspectionScreen = () => {
     ].forEach(v => {
       if (v) count += 1;
     });
+    if (refurbCost) count += 1;
     return count;
   }, [
     steering,
@@ -74,6 +79,7 @@ const FunctionsInspectionScreen = () => {
     gearBoxNoise,
     transmissionLeakage,
     differentialNoise,
+    refurbCost,
   ]);
 
   const resetAll = () => {
@@ -102,55 +108,59 @@ const FunctionsInspectionScreen = () => {
     };
     const applyData = (fnData: any) => {
       if (!fnData || typeof fnData !== 'object') return;
+      const source = fnData.Reports || fnData.reports || fnData;
       const proper =
-        fnData.proper_condition ||
-        fnData['proper_condition'] ||
-        fnData.properCondition ||
-        fnData.properCondition;
+        source.proper_condition ||
+        source['proper_condition'] ||
+        source.properCondition ||
+        source.properCondition;
       const noise =
-        fnData['noise/leakage'] ||
-        fnData.noiseLeakage ||
-        fnData.noise ||
-        fnData.Noise;
+        source['noise/leakage'] ||
+        source.noiseLeakage ||
+        source.noise ||
+        source.Noise;
       const properObj = proper && typeof proper === 'object' ? proper : {};
       const noiseObj = noise && typeof noise === 'object' ? noise : {};
 
-      setSteering(normYesNo(properObj['Steering'] || fnData.Steering || fnData.steering));
-      setSuspension(normYesNo(properObj['Suspension'] || fnData.Suspension || fnData.suspension));
-      setBrake(normYesNo(properObj['Brake'] || fnData.Brake || fnData.brake));
-      setGearShifting(normYesNo(properObj['Gear Shifting'] || fnData['Gear Shifting'] || fnData.gearShifting));
+      setSteering(normYesNo(properObj['Steering'] || source.Steering || source.steering));
+      setSuspension(normYesNo(properObj['Suspension'] || source.Suspension || source.suspension));
+      setBrake(normYesNo(properObj['Brake'] || source.Brake || source.brake));
+      setGearShifting(normYesNo(properObj['Gear Shifting'] || source['Gear Shifting'] || source.gearShifting));
       setDriveShaft(
         normYesNo(
           properObj['Drive Shaft/ Axle'] ||
             properObj['Drive Shaft'] ||
-            fnData['Drive Shaft/ Axle'] ||
-            fnData.driveShaft,
+            source['Drive Shaft/ Axle'] ||
+            source.driveShaft,
         ),
       );
-      setClutch(normYesNo(properObj['Clutch'] || fnData.Clutch || fnData.clutch));
+      setClutch(normYesNo(properObj['Clutch'] || source.Clutch || source.clutch));
 
       setWheelBearingNoise(
-        normYesNo(noiseObj['Wheel Bearing Noise'] || fnData['Wheel Bearing Noise'] || fnData.wheelBearingNoise),
+        normYesNo(noiseObj['Wheel Bearing Noise'] || source['Wheel Bearing Noise'] || source.wheelBearingNoise),
       );
-      setGearBoxNoise(normYesNo(noiseObj['Gear Box Noise'] || fnData['Gear Box Noise'] || fnData.gearBoxNoise));
+      setGearBoxNoise(normYesNo(noiseObj['Gear Box Noise'] || source['Gear Box Noise'] || source.gearBoxNoise));
       setDifferentialNoise(
-        normYesNo(noiseObj['Differential Noise'] || fnData['Differential Noise'] || fnData.differentialNoise),
+        normYesNo(noiseObj['Differential Noise'] || source['Differential Noise'] || source.differentialNoise),
       );
       setTransmissionLeakage(
         normYesNo(
           noiseObj['Transmission/ Differential Oil Leakage'] ||
-            fnData['Transmission/ Differential Oil Leakage'] ||
-            fnData.transmissionLeakage,
+            source['Transmission/ Differential Oil Leakage'] ||
+            source.transmissionLeakage,
         ),
       );
 
-      if (fnData['Highlight Positives'] !== undefined) {
-        setHighlightPositives(String(fnData['Highlight Positives'] || ''));
+      if (source['Highlight Positives'] !== undefined) {
+        setHighlightPositives(String(source['Highlight Positives'] || ''));
       }
-      if (fnData['Other Comments'] !== undefined) {
-        setOtherComments(String(fnData['Other Comments'] || ''));
+      if (source['Other Comments'] !== undefined) {
+        setOtherComments(String(source['Other Comments'] || ''));
       }
-      const refurb = fnData['Refurbishment Cost'] || fnData.refurbCost || fnData.refurbishmentCost;
+      const refurb =
+        source['Refurbishment Cost'] ||
+        source.refurbCost ||
+        source.refurbishmentCost;
       if (refurb !== undefined && `${refurb}`.trim() !== '') {
         setRefurbCost(String(refurb));
       }
@@ -168,9 +178,13 @@ const FunctionsInspectionScreen = () => {
           params: {sellCarId: formattedSellCarId},
         });
         if (!cancelled) {
+          const existing = res.data?.data?.allInspections?.[0];
+          if (existing?.id != null) {
+            setInspectionId(existing.id);
+          }
           const fn =
-            res.data?.data?.allInspections?.[0]?.functions ||
-            res.data?.data?.allInspections?.[0]?.Functions ||
+            existing?.functions ||
+            existing?.Functions ||
             res.data?.data?.functions ||
             res.data?.functions;
           applyData(fn);
@@ -250,6 +264,83 @@ const FunctionsInspectionScreen = () => {
       </View>
     </View>
   );
+
+  const handleSubmit = async () => {
+    setMessage(null);
+    if (!formattedSellCarId) {
+      setMessage('Missing sellCarId.');
+      return;
+    }
+    const required = [
+      {label: 'Steering', val: steering},
+      {label: 'Suspension', val: suspension},
+      {label: 'Brake', val: brake},
+      {label: 'Gear Shifting', val: gearShifting},
+      {label: 'Drive Shaft / Axle', val: driveShaft},
+      {label: 'Clutch', val: clutch},
+      {label: 'Wheel Bearing Noise', val: wheelBearingNoise},
+      {label: 'Gear Box Noise', val: gearBoxNoise},
+      {label: 'Transmission / Differential Oil Leakage', val: transmissionLeakage},
+      {label: 'Differential Noise', val: differentialNoise},
+      {label: 'Refurbishment Cost', val: refurbCost},
+    ];
+    const missing = required.find(item => !item.val);
+    if (missing) {
+      setMessage(`Select ${missing.label}`);
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const reports = {
+        proper_condition: {
+          Steering: steering,
+          Suspension: suspension,
+          Brake: brake,
+          'Gear Shifting': gearShifting,
+          'Drive Shaft/ Axle': driveShaft,
+          Clutch: clutch,
+        },
+        'noise/leakage': {
+          'Wheel Bearing Noise': wheelBearingNoise,
+          'Gear Box Noise': gearBoxNoise,
+          'Transmission/ Differential Oil Leakage': transmissionLeakage,
+          'Differential Noise': differentialNoise,
+        },
+        'Highlight Positives': highlightPositives,
+        'Other Comments': otherComments,
+        'Refurbishment Cost': refurbCost || '0',
+      };
+
+      const token = store.getState().auth.token;
+      await client.post(
+        '/api/add-functions-inspection',
+        {
+          id: inspectionId || formattedSellCarId,
+          sellCarId: formattedSellCarId,
+          Reports: reports,
+        },
+        {headers: token ? {Authorization: `Bearer ${token}`} : undefined},
+      );
+
+      setMessage('Functions inspection saved.');
+      navigation.navigate('FramesInspection', {sellCarId: formattedSellCarId});
+    } catch (err: any) {
+      console.error('[Functions] save failed', {
+        message: err?.message,
+        status: err?.response?.status,
+        data: err?.response?.data,
+      });
+      setMessage(
+        err?.response?.data?.message ||
+          err?.response?.data?.errors?.message ||
+          err?.message ||
+          'Failed to save functions inspection',
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   return (
     <SafeAreaView style={styles.root}>
@@ -347,11 +438,15 @@ const FunctionsInspectionScreen = () => {
           </View>
 
           <Pressable
-            style={styles.nextBtn}
-            onPress={() => navigation.goBack()}
+            style={[styles.nextBtn, submitting && {opacity: 0.7}]}
+            onPress={handleSubmit}
+            disabled={submitting}
             android_ripple={{color: 'rgba(255,255,255,0.15)'}}>
-            <Text style={styles.nextLabel}>Next</Text>
+            <Text style={styles.nextLabel}>
+              {submitting ? 'Saving...' : 'Save & Next'}
+            </Text>
           </Pressable>
+          {message ? <Text style={styles.helperText}>{message}</Text> : null}
         </View>
         )}
       </ScrollView>
@@ -544,6 +639,11 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '700',
     color: '#ffffff',
+  },
+  helperText: {
+    marginTop: 10,
+    fontSize: 12,
+    color: '#b91c1c',
   },
   skeletonBlock: {
     backgroundColor: '#e5e7eb',

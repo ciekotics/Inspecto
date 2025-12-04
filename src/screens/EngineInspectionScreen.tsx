@@ -26,6 +26,7 @@ import {
 import {PRIMARY} from '../utils/theme';
 import {client} from '../utils/apiClient';
 import {loadDraft, saveDraft} from '../utils/draftStorage';
+import {store} from '../store/store';
 
 type RouteParams = {
   sellCarId?: string | number;
@@ -40,6 +41,7 @@ const EngineInspectionScreen = () => {
   const formattedSellCarId =
     sellCarId == null ? '' : String(sellCarId).trim();
 
+  const [inspectionId, setInspectionId] = useState<string | number>('');
   const [engineWorking, setEngineWorking] = useState<YesNo>('');
   const [engineCost, setEngineCost] = useState('');
   const [engineImage, setEngineImage] = useState<string | null>(null);
@@ -59,6 +61,8 @@ const EngineInspectionScreen = () => {
   const [otherComments, setOtherComments] = useState('');
   const [refurbCostTotal, setRefurbCostTotal] = useState('');
   const [prefillLoading, setPrefillLoading] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
   const [pickerVisible, setPickerVisible] = useState(false);
   const [previewVisible, setPreviewVisible] = useState(false);
@@ -172,6 +176,39 @@ const EngineInspectionScreen = () => {
     </View>
   );
 
+  const appendFileToFormData = async (
+    fd: FormData,
+    fieldName: string,
+    uri: string,
+  ) => {
+    const ext = uri.split('.').pop() || 'jpg';
+    const mime =
+      ext === 'png'
+        ? 'image/png'
+        : ext === 'jpeg' || ext === 'jpg'
+        ? 'image/jpeg'
+        : 'application/octet-stream';
+    const isRemote = uri.startsWith('http://') || uri.startsWith('https://');
+    if (isRemote) {
+      const res = await fetch(uri);
+      const blob = await res.blob();
+      const typedBlob =
+        blob.type && blob.type.length > 0
+          ? blob
+          : new Blob([blob], {type: mime || 'application/octet-stream'});
+      (typedBlob as any).name = `${fieldName}.${ext}`;
+      fd.append(fieldName, typedBlob as any);
+    } else {
+      const normalizedUri =
+        uri.startsWith('file://') || uri.startsWith('content://') ? uri : uri;
+      fd.append(fieldName, {
+        uri: normalizedUri,
+        name: `${fieldName}.${ext}`,
+        type: mime,
+      } as any);
+    }
+  };
+
   useEffect(() => {
     let cancelled = false;
     const normYesNo = (val: any): YesNo => {
@@ -215,6 +252,9 @@ const EngineInspectionScreen = () => {
         });
         if (cancelled) return;
         const existing = res.data?.data?.allInspections?.[0];
+        if (existing?.id != null) {
+          setInspectionId(existing.id);
+        }
         const engineData =
           existing?.engine ||
           existing?.Engine ||
@@ -352,6 +392,105 @@ const EngineInspectionScreen = () => {
     otherComments,
     refurbCostTotal,
   ]);
+
+  const handleSubmit = async () => {
+    setMessage(null);
+    if (!formattedSellCarId) {
+      setMessage('Missing sellCarId.');
+      return;
+    }
+    const requiredFields: {label: string; val: YesNo}[] = [
+      {label: 'Engine', val: engineWorking},
+      {label: 'Radiator', val: radiator},
+      {label: 'Silencer', val: silencer},
+      {label: 'Starter Motor', val: starterMotor},
+      {label: 'Engine Oil Level', val: engineOilLevel},
+      {label: 'Coolant Availability', val: coolantAvailability},
+      {label: 'Engine Mounting', val: engineMounting},
+      {label: 'Battery', val: battery},
+      {label: 'Engine Oil Leakage', val: engineOilLeakage},
+      {label: 'Coolant Oil Leakage', val: coolantOilLeakage},
+      {label: 'Abnormal Noise', val: abnormalNoise},
+      {label: 'Black Smoke / White Smoke', val: blackSmoke},
+      {label: 'Defective Belts', val: defectiveBelts},
+    ];
+    const missing = requiredFields.find(item => !item.val);
+    if (missing) {
+      setMessage(`Select ${missing.label}`);
+      return;
+    }
+    if (!engineCost) {
+      setMessage('Enter engine refurbishment cost.');
+      return;
+    }
+    if (!engineImage) {
+      setMessage('Add engine image.');
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const working = {
+        Engine: engineWorking,
+        Radiator: radiator,
+        Silencer: silencer,
+        'Starter Motor': starterMotor,
+        'Engine Oil Level': engineOilLevel,
+        'Coolant Availability': coolantAvailability,
+        'Engine Mounting': engineMounting,
+        Battery: battery,
+        'Refurbishment Cost': engineCost || '0',
+        'Engine image': '',
+      };
+      const noise = {
+        'Engine Oil Leakage': engineOilLeakage,
+        'Coolant Oil Leakage': coolantOilLeakage,
+        'Abnormal Noise': abnormalNoise,
+        'Black Smoke/White Smoke': blackSmoke,
+        'Defective Belts': defectiveBelts,
+        'Highlight Positives': highlightPositives,
+        'Other Comments': otherComments,
+      };
+      const reports = {
+        working,
+        'noise/leakage': noise,
+        'Refurbishment Cost (Total)': refurbCostTotal || '0',
+      };
+
+      const fd = new FormData();
+      fd.append('id', String(inspectionId || formattedSellCarId));
+      fd.append('sellCarId', formattedSellCarId);
+      fd.append('Reports', JSON.stringify(reports));
+      fd.append('deletedFiles', JSON.stringify([]));
+      await appendFileToFormData(fd, 'engine', engineImage);
+
+      const token = store.getState().auth.token;
+      const resp = await fetch('https://api.marnix.in/api/add-engine-inspection', {
+        method: 'POST',
+        headers: {
+          Authorization: token ? `Bearer ${token}` : '',
+          Accept: '*/*',
+        },
+        body: fd,
+      });
+      const text = await resp.text();
+      if (!resp.ok) {
+        console.error('[Engine] upload failed', {
+          status: resp.status,
+          statusText: resp.statusText,
+          body: text,
+        });
+        throw new Error(text || 'Failed to save engine inspection');
+      }
+
+      setMessage('Engine inspection saved.');
+      navigation.navigate('FunctionsInspection', {sellCarId: formattedSellCarId});
+    } catch (err: any) {
+      setMessage(err?.message || 'Failed to save engine inspection');
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   return (
     <SafeAreaView style={styles.root}>
@@ -503,11 +642,15 @@ const EngineInspectionScreen = () => {
           </View>
 
           <Pressable
-            style={styles.nextBtn}
-            onPress={() => navigation.goBack()}
+            style={[styles.nextBtn, submitting && {opacity: 0.7}]}
+            onPress={handleSubmit}
+            disabled={submitting}
             android_ripple={{color: 'rgba(255,255,255,0.15)'}}>
-            <Text style={styles.nextLabel}>Next</Text>
+            <Text style={styles.nextLabel}>
+              {submitting ? 'Saving...' : 'Save & Next'}
+            </Text>
           </Pressable>
+          {message ? <Text style={styles.helperText}>{message}</Text> : null}
         </View>
         )}
       </ScrollView>
@@ -840,6 +983,11 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '700',
     color: '#ffffff',
+  },
+  helperText: {
+    marginTop: 10,
+    fontSize: 12,
+    color: '#b91c1c',
   },
   pickerOverlay: {
     flex: 1,
