@@ -10,13 +10,14 @@ import {
   Modal,
 } from 'react-native';
 import {useNavigation} from '@react-navigation/native';
+import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {Calendar, Car, Square, User, Clock} from 'lucide-react-native';
 import {PRIMARY} from '../utils/theme';
 
 import {client} from '../utils/apiClient';
 import {useAppSelector} from '../store/hooks';
 
-type BookingStatus = 'Booked' | 'Unassigned';
+type BookingStatus = 'Booked' | 'Unassigned' | 'Completed';
 
 type Booking = {
   id: string;
@@ -162,6 +163,8 @@ const formatIsoDateLabel = (value: string | undefined) => {
 };
 
 export default function HomeScreen() {
+  const insets = useSafeAreaInsets();
+  const bottomContentInset = 80 + insets.bottom; // keep cards clear of the floating tab bar
   const [activeTab, setActiveTab] = useState<TabKey>('bookings');
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [ownedVehicles, setOwnedVehicles] = useState<OwnedVehicle[]>([]);
@@ -306,20 +309,28 @@ export default function HomeScreen() {
           ? normalizeName(effectiveInspectorName)
           : null;
 
+        const normalizeStatusValue = (val: any) =>
+          String(val || '').trim().toUpperCase();
+
         let visibleSlots = slots.filter(slot => {
           if (!slot) {
             return false;
           }
-          if (slot.currentStatus !== 'BOOKED') {
+          const statusNorm = normalizeStatusValue(
+            slot.currentStatus || slot.status,
+          );
+          const isCompleted = statusNorm.includes('COMPLETED');
+          const isBooked = statusNorm === 'BOOKED';
+
+          if (!isBooked && !isCompleted) {
             return false;
           }
           if (slot.status === false) {
             return false;
           }
           if (typeof slot.date === 'string' && slot.date) {
-            if (slot.date !== todayStr) {
-              return false;
-            }
+            if (isBooked && slot.date !== todayStr) return false;
+            if (isCompleted && slot.date !== todayStr) return false;
           }
           return true;
         });
@@ -328,6 +339,14 @@ export default function HomeScreen() {
           visibleSlots = visibleSlots.filter(slot => {
             const inspectorRaw = String(slot?.inspector || '').trim();
             const inspectorNorm = normalizeName(inspectorRaw || '');
+            const statusNorm = normalizeStatusValue(
+              slot.currentStatus || slot.status,
+            );
+            const isCompleted = statusNorm.includes('COMPLETED');
+            if (isCompleted) {
+              if (!normalizedInspector) return false;
+              return inspectorNorm === normalizedInspector;
+            }
             if (!inspectorRaw || inspectorNorm === 'NOT ASSIGNED') {
               // Unassigned bookings are visible to everyone who is authorised.
               return true;
@@ -364,7 +383,14 @@ export default function HomeScreen() {
             inspectorRaw &&
             inspectorNorm !== 'NOT ASSIGNED';
 
-          const bookingStatus: BookingStatus = isAssigned
+          const statusNorm = normalizeStatusValue(
+            slot.currentStatus || slot.status,
+          );
+          const isCompleted = statusNorm.includes('COMPLETED');
+
+          const bookingStatus: BookingStatus = isCompleted
+            ? 'Completed'
+            : isAssigned
             ? 'Booked'
             : 'Unassigned';
 
@@ -856,10 +882,13 @@ export default function HomeScreen() {
       </View>
 
       {/* Content */}
-      <View style={styles.content}>
+      <View style={[styles.content, {paddingBottom: bottomContentInset}]}>
         {activeTab === 'bookings' ? (
           <ScrollView
-            contentContainerStyle={styles.listContent}
+            contentContainerStyle={[
+              styles.listContent,
+              {paddingBottom: bottomContentInset},
+            ]}
             showsVerticalScrollIndicator={false}>
             {effectiveBookings.map(b => (
               <Pressable
@@ -870,7 +899,9 @@ export default function HomeScreen() {
                 <View
                   style={[
                     styles.dateColumn,
-                    b.status === 'Booked'
+                    b.status === 'Completed'
+                      ? styles.dateCompleted
+                      : b.status === 'Booked'
                       ? styles.dateConfirmed
                       : styles.dateCancelled,
                   ]}>
@@ -952,7 +983,10 @@ export default function HomeScreen() {
 
             {ownedVehicles.length > 0 ? (
               <ScrollView
-                contentContainerStyle={styles.listContent}
+                contentContainerStyle={[
+                  styles.listContent,
+                  {paddingBottom: bottomContentInset},
+                ]}
                 showsVerticalScrollIndicator={false}>
                 {ownedVehicles.map(b => (
                   <View key={`${b.id}-${b.number}`} style={styles.card}>
@@ -995,7 +1029,7 @@ export default function HomeScreen() {
                 ))}
               </ScrollView>
             ) : (
-              <View style={styles.placeholder}>
+              <View style={[styles.placeholder, {paddingBottom: bottomContentInset}]}>
                 <Text style={styles.placeholderText}>
                   {ownedLoading
                     ? 'Loading owned vehicles...'
@@ -1005,7 +1039,7 @@ export default function HomeScreen() {
             )}
           </View>
         ) : (
-          <View style={styles.placeholder}>
+          <View style={[styles.placeholder, {paddingBottom: bottomContentInset}]}>
             <Text style={styles.placeholderText}>
               Select a tab to view content.
             </Text>
@@ -1014,12 +1048,20 @@ export default function HomeScreen() {
       </View>
 
       {/* Bottom tabs */}
-      <View style={styles.tabBar}>
+      <View
+        style={[
+          styles.tabBar,
+          {
+            bottom: 16 + insets.bottom,
+            backgroundColor: '#f3f4f6',
+            paddingVertical: 6,
+          },
+        ]}>
         {TABS.map(tab => {
           const animated = animations[tab.key];
           const pillPadding = animated.interpolate({
             inputRange: [0, 1],
-            outputRange: [0, 18],
+            outputRange: [0, 12],
           });
           const labelOpacity = animated;
           const labelMargin = animated.interpolate({
@@ -1494,7 +1536,10 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   dateConfirmed: {
-    backgroundColor: '#16a34a',
+    backgroundColor: '#fbbf24',
+  },
+  dateCompleted: {
+    backgroundColor: '#22c55e',
   },
   dateCancelled: {
     backgroundColor: '#9ca3af',
@@ -1519,7 +1564,7 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   dateStatus: {
-    color: '#bbf7d0',
+    color: '#ffffff',
     fontSize: 10,
     marginTop: 2,
   },
@@ -1587,14 +1632,14 @@ const styles = StyleSheet.create({
   tab: {
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 8,
+    paddingVertical: 6,
     borderRadius: 20,
     flexDirection: 'row',
   },
   tabPressable: {
     alignItems: 'center',
     justifyContent: 'center',
-    marginHorizontal: 10,
+    marginHorizontal: 8,
   },
   tabText: {
     fontSize: 13,

@@ -1,5 +1,32 @@
 import {createApi, fetchBaseQuery} from '@reduxjs/toolkit/query/react';
 
+const headersToObject = (headers: any) => {
+  const obj: Record<string, string> = {};
+  if (!headers) {
+    return obj;
+  }
+  try {
+    if (typeof headers.forEach === 'function') {
+      headers.forEach((value: string, key: string) => {
+        obj[key] = value;
+      });
+      return obj;
+    }
+    if (typeof headers.entries === 'function') {
+      for (const [key, value] of headers.entries()) {
+        obj[key as string] = String(value);
+      }
+      return obj;
+    }
+    if ((headers as any).map && typeof (headers as any).map === 'object') {
+      return {...(headers as any).map};
+    }
+  } catch (err) {
+    console.warn('[inspectionApi] failed to normalize headers', err);
+  }
+  return obj;
+};
+
 const appendFileToFormData = async (
   fd: FormData,
   fieldName: string,
@@ -123,7 +150,8 @@ export const inspectionApi = createApi({
         if (result.error) {
           return {error: result.error};
         }
-        return {data: result.data};
+        const headers = headersToObject((result.meta as any)?.response?.headers);
+        return {data: {body: result.data, headers}};
       },
     }),
   }),

@@ -10,13 +10,13 @@ import {
   RefreshControl,
 } from 'react-native';
 import {useNavigation} from '@react-navigation/native';
-import {Calendar, ChevronLeft, ChevronRight} from 'lucide-react-native';
+import {Calendar, ChevronLeft, ChevronRight, Star} from 'lucide-react-native';
 import {PRIMARY} from '../utils/theme';
 import {client} from '../utils/apiClient';
 import {useAppDispatch, useAppSelector} from '../store/hooks';
 import {setCalendarSlots} from '../store/slices/calendarSlotsSlice';
 
-type CalendarSlotStatus = 'Booked' | 'Unassigned';
+type CalendarSlotStatus = 'Booked' | 'Unassigned' | 'Completed';
 
 type CalendarSlot = {
   id: string;
@@ -26,6 +26,7 @@ type CalendarSlot = {
   inspectorName: string | null;
   status: CalendarSlotStatus;
   date: string; // DD/MM/YYYY
+  rating?: number | null;
 };
 
 const WEEKDAYS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
@@ -62,6 +63,9 @@ const MONTH_LABELS_SHORT = [
 
 const normalizeName = (value: string) =>
   value.trim().replace(/\s+/g, ' ').toUpperCase();
+
+const normalizeStatusValue = (val: any) =>
+  String(val || '').trim().toUpperCase();
 
 const extractStartTime = (timeRange: string | undefined) => {
   if (!timeRange) {
@@ -220,7 +224,12 @@ export default function CalendarScreen() {
           if (!slot) {
             return false;
           }
-          if (slot.currentStatus !== 'BOOKED') {
+          const statusNorm = normalizeStatusValue(
+            slot.currentStatus || slot.status,
+          );
+          const isCompleted = statusNorm.includes('COMPLETED');
+          const isBooked = statusNorm === 'BOOKED';
+          if (!isBooked && !isCompleted) {
             return false;
           }
           if (slot.status === false) {
@@ -233,6 +242,16 @@ export default function CalendarScreen() {
           visibleSlots = visibleSlots.filter(slot => {
             const inspectorRaw = String(slot?.inspector || '').trim();
             const inspectorNorm = normalizeName(inspectorRaw || '');
+            const statusNorm = normalizeStatusValue(
+              slot.currentStatus || slot.status,
+            );
+            const isCompleted = statusNorm.includes('COMPLETED');
+            if (isCompleted) {
+              if (!normalizedInspector) {
+                return false;
+              }
+              return inspectorNorm === normalizedInspector;
+            }
             if (!inspectorRaw || inspectorNorm === 'NOT ASSIGNED') {
               return true;
             }
@@ -244,33 +263,49 @@ export default function CalendarScreen() {
         }
 
         const mapped: CalendarSlot[] = visibleSlots.map(slot => {
-      const vehicle = slot.vehicleDetails || {};
-      const titleParts = [
-        vehicle.brand,
-        vehicle.model,
-        vehicle.variant,
-      ]
-        .filter(Boolean)
-        .join(' ');
-      const inspectorRaw = String(slot?.inspector || '').trim();
-      const inspectorNorm = normalizeName(inspectorRaw || '');
-      const isAssigned =
-        !!inspectorRaw && inspectorNorm !== 'NOT ASSIGNED';
-      const status: CalendarSlotStatus = isAssigned
-        ? 'Booked'
-        : 'Unassigned';
-      const sellCarId =
-        slot.sellCarId != null ? slot.sellCarId : slot.id;
+          const vehicle = slot.vehicleDetails || {};
+          const titleParts = [
+            vehicle.brand,
+            vehicle.model,
+            vehicle.variant,
+          ]
+            .filter(Boolean)
+            .join(' ');
+          const inspectorRaw = String(slot?.inspector || '').trim();
+          const inspectorNorm = normalizeName(inspectorRaw || '');
+          const isAssigned =
+            !!inspectorRaw && inspectorNorm !== 'NOT ASSIGNED';
+          const statusNorm = normalizeStatusValue(
+            slot.currentStatus || slot.status,
+          );
+          const isCompleted = statusNorm.includes('COMPLETED');
+          const status: CalendarSlotStatus = isCompleted
+            ? 'Completed'
+            : isAssigned
+            ? 'Booked'
+            : 'Unassigned';
+          const ratingRaw =
+            slot?.evaluatorRating ??
+            slot?.rating ??
+            slot?.evaluator_rating ??
+            slot?.ratingValue;
+          const ratingNum =
+            ratingRaw != null && !Number.isNaN(Number(ratingRaw))
+              ? Number(ratingRaw)
+              : null;
+          const sellCarId =
+            slot.sellCarId != null ? slot.sellCarId : slot.id;
 
-      return {
-        id: String(slot.id ?? slot.sellCarId ?? ''),
-        sellCarId: sellCarId != null ? String(sellCarId) : undefined,
-        time: extractStartTime(
-          typeof slot.time === 'string' ? slot.time : undefined,
-        ),
-        title: titleParts || 'Inspection',
-        inspectorName: inspectorRaw || null,
+          return {
+            id: String(slot.id ?? slot.sellCarId ?? ''),
+            sellCarId: sellCarId != null ? String(sellCarId) : undefined,
+            time: extractStartTime(
+              typeof slot.time === 'string' ? slot.time : undefined,
+            ),
+            title: titleParts || 'Inspection',
+            inspectorName: inspectorRaw || null,
             status,
+            rating: ratingNum,
             date: String(slot.date || ''),
           };
         });
@@ -338,10 +373,37 @@ export default function CalendarScreen() {
     return map;
   }, [slots, currentMonth, currentYear]);
 
-  const inspectionDays = useMemo(
-    () => Object.keys(slotsByDay).map(d => Number(d)),
-    [slotsByDay],
-  );
+  const dayMetaByDay = useMemo(() => {
+    const meta: Record<
+      number,
+      {completed: CalendarSlot[]; pending: CalendarSlot[]; rating: number | null}
+    > = {};
+
+    Object.entries(slotsByDay).forEach(([dayKey, daySlots]) => {
+      const day = Number(dayKey);
+      const completed = (daySlots as CalendarSlot[]).filter(
+        slot => slot.status === 'Completed',
+      );
+      const pending = (daySlots as CalendarSlot[]).filter(
+        slot => slot.status !== 'Completed',
+      );
+      const ratingValues = completed
+        .map(slot =>
+          typeof slot.rating === 'number'
+            ? slot.rating
+            : Number(slot.rating),
+        )
+        .filter(val => Number.isFinite(val)) as number[];
+      const ratingAvg =
+        ratingValues.length > 0
+          ? ratingValues.reduce((sum, val) => sum + val, 0) /
+            ratingValues.length
+          : null;
+      meta[day] = {completed, pending, rating: ratingAvg};
+    });
+
+    return meta;
+  }, [slotsByDay]);
 
   const slotsForSelectedDay = useMemo(() => {
     const base = slotsByDay[selectedDay] || [];
@@ -701,7 +763,9 @@ export default function CalendarScreen() {
                   );
                 }
                 const isSelected = day === selectedDay;
-                const hasInspections = inspectionDays.includes(day);
+                const dayMeta = dayMetaByDay[day];
+                const completedCount = dayMeta?.completed.length || 0;
+                const hasPending = (dayMeta?.pending.length || 0) > 0;
                 return (
                   <Pressable
                     key={day}
@@ -710,20 +774,29 @@ export default function CalendarScreen() {
                       setSelectedDay(day);
                       setFilter('today');
                     }}>
-                    <View
-                      style={[
-                        styles.datePill,
-                        isSelected && styles.datePillSelected,
-                      ]}>
-                      <Text
+                    <View style={styles.datePillWrapper}>
+                      {completedCount > 0 && (
+                        <View style={styles.dateBadge}>
+                          <Text style={styles.dateBadgeText}>
+                            {completedCount}
+                          </Text>
+                        </View>
+                      )}
+                      <View
                         style={[
-                          styles.dateText,
-                          isSelected && styles.dateTextSelected,
+                          styles.datePill,
+                          isSelected && styles.datePillSelected,
                         ]}>
-                        {day}
-                      </Text>
+                        <Text
+                          style={[
+                            styles.dateText,
+                            isSelected && styles.dateTextSelected,
+                          ]}>
+                          {day}
+                        </Text>
+                      </View>
                     </View>
-                    {hasInspections && (
+                    {hasPending && (
                       <View
                         style={[
                           styles.dateDot,
@@ -852,6 +925,24 @@ export default function CalendarScreen() {
           ) : (
             slotsForSelectedDay.map((slot, index) => {
               const isBooked = slot.status === 'Booked';
+              const isCompleted = slot.status === 'Completed';
+              const statusPillStyle = isCompleted
+                ? styles.statusPillCompleted
+                : isBooked
+                ? styles.statusPillBooked
+                : styles.statusPillUnassigned;
+              const statusTextStyle = isCompleted
+                ? styles.statusTextCompleted
+                : isBooked
+                ? styles.statusTextBooked
+                : styles.statusTextUnassigned;
+              const ratingRounded =
+                slot.rating != null && !Number.isNaN(Number(slot.rating))
+                  ? Math.max(
+                      0,
+                      Math.min(5, Math.round(Number(slot.rating))),
+                    )
+                  : null;
               const key = `${slot.id}-${slot.date}-${slot.time}-${index}`;
               return (
                 <Pressable
@@ -867,16 +958,12 @@ export default function CalendarScreen() {
                       <View
                         style={[
                           styles.statusPill,
-                          isBooked
-                            ? styles.statusPillBooked
-                            : styles.statusPillUnassigned,
+                          statusPillStyle,
                         ]}>
                         <Text
                           style={[
                             styles.statusText,
-                            isBooked
-                              ? styles.statusTextBooked
-                              : styles.statusTextUnassigned,
+                            statusTextStyle,
                           ]}>
                           {slot.status}
                         </Text>
@@ -890,6 +977,23 @@ export default function CalendarScreen() {
                     <Text style={styles.secondaryText}>
                       Tap a date above to change the inspection focus.
                     </Text>
+                    {isCompleted && ratingRounded != null && (
+                      <View style={styles.cardRatingRow}>
+                        {[1, 2, 3, 4, 5].map(star => {
+                          const active =
+                            ratingRounded != null && ratingRounded >= star;
+                          return (
+                            <Star
+                              key={`card-star-${slot.id}-${star}`}
+                              size={12}
+                              color={active ? '#22c55e' : '#d1d5db'}
+                              fill={active ? '#22c55e' : 'none'}
+                              strokeWidth={2}
+                            />
+                          );
+                        })}
+                      </View>
+                    )}
                   </View>
                 </Pressable>
               );
@@ -935,10 +1039,7 @@ export default function CalendarScreen() {
                     <View style={styles.detailHeaderSubRow}>
                       {detailSlot?.time ? (
                         <Text style={styles.detailSubTitle}>
-                          {detailSlot.time} •{' '}
-                          {detailSlot.status === 'Booked'
-                            ? 'Booked'
-                            : 'Unassigned'}
+                          {detailSlot.time} | {detailSlot.status}
                         </Text>
                       ) : null}
                       {detailData?.currentStatus ? (
@@ -1231,8 +1332,14 @@ const styles = StyleSheet.create({
   },
   dateCell: {
     width: `${100 / 7}%`,
-    paddingVertical: 4,
+    paddingVertical: 6,
     alignItems: 'center',
+    justifyContent: 'flex-start',
+  },
+  datePillWrapper: {
+    position: 'relative',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   datePill: {
     width: 30,
@@ -1256,15 +1363,33 @@ const styles = StyleSheet.create({
     color: PRIMARY,
     fontWeight: '700',
   },
+  dateBadge: {
+    position: 'absolute',
+    top: -8,
+    right: -8,
+    minWidth: 18,
+    height: 18,
+    paddingHorizontal: 4,
+    borderRadius: 9,
+    backgroundColor: '#22c55e',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 2,
+  },
+  dateBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
   dateDot: {
     width: 4,
     height: 4,
     borderRadius: 2,
     marginTop: 2,
-    backgroundColor: '#f97316',
+    backgroundColor: '#ef4444',
   },
   dateDotSelected: {
-    backgroundColor: PRIMARY,
+    backgroundColor: '#b91c1c',
   },
   filterRow: {
     flexDirection: 'row',
@@ -1361,12 +1486,18 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   statusPillBooked: {
-    backgroundColor: '#16a34a',
+    backgroundColor: '#fbbf24',
+  },
+  statusPillCompleted: {
+    backgroundColor: '#22c55e',
   },
   statusPillUnassigned: {
     backgroundColor: '#9ca3af',
   },
   statusTextBooked: {
+    color: '#92400e',
+  },
+  statusTextCompleted: {
     color: '#ffffff',
   },
   statusTextUnassigned: {
@@ -1381,6 +1512,11 @@ const styles = StyleSheet.create({
     marginTop: 2,
     fontSize: 11,
     color: '#9ca3af',
+  },
+  cardRatingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 6,
   },
   skeletonLine: {
     height: 10,
@@ -1576,5 +1712,8 @@ const styles = StyleSheet.create({
     lineHeight: 16,
   },
 });
+
+
+
 
 

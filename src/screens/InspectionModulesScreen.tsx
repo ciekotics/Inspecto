@@ -9,6 +9,11 @@ import {
   ActivityIndicator,
   RefreshControl,
   TextInput,
+  Alert,
+  Share,
+  Platform,
+  PermissionsAndroid,
+  Linking,
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import {
@@ -29,6 +34,22 @@ import {
 import { PRIMARY } from '../utils/theme';
 import { client } from '../utils/apiClient';
 import { loadDraft } from '../utils/draftStorage';
+import { store } from '../store/store';
+import RNFS from 'react-native-fs';
+import RNHTMLtoPDF from 'react-native-html-to-pdf';
+
+const arrayBufferToBase64 = (buffer: ArrayBuffer) => {
+  let binary = '';
+  const bytes = new Uint8Array(buffer);
+  const len = bytes.byteLength;
+  for (let i = 0; i < len; i += 1) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  if (typeof global.btoa === 'function') {
+    return global.btoa(binary);
+  }
+  return '';
+};
 
 type RouteParams = {
   sellCarId?: string | number;
@@ -82,6 +103,27 @@ const InspectionModulesScreen = () => {
   const [drivingExperience, setDrivingExperience] = useState('');
   const [refurbTotal, setRefurbTotal] = useState('0');
   const [ratingSaved, setRatingSaved] = useState(false);
+  const [ratingId, setRatingId] = useState<string | number>('');
+  const [ratingSubmitting, setRatingSubmitting] = useState(false);
+  const [ratingError, setRatingError] = useState<string | null>(null);
+  const [reportDownloading, setReportDownloading] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
+  const [inspectionId, setInspectionId] = useState<string | number>('');
+  const [lastDownloadPath, setLastDownloadPath] = useState<string | null>(null);
+  const [engineInfoData, setEngineInfoData] = useState<Record<string, any> | null>(null);
+  const [regDetailsData, setRegDetailsData] = useState<Record<string, any> | null>(null);
+  const [inspectionSnapshot, setInspectionSnapshot] = useState<any | null>(null);
+  const [exteriorDataState, setExteriorDataState] = useState<any | null>(null);
+  const [interiorDataState, setInteriorDataState] = useState<any | null>(null);
+  const [engineDataState, setEngineDataState] = useState<any | null>(null);
+  const [testDriveDataState, setTestDriveDataState] = useState<any | null>(null);
+  const [functionsDataState, setFunctionsDataState] = useState<any | null>(null);
+  const [framesDataState, setFramesDataState] = useState<any | null>(null);
+  const [defectsDataState, setDefectsDataState] = useState<any[]>([]);
+  const [refurbDataState, setRefurbDataState] = useState<any | null>(null);
+  const [evaluationGenerating, setEvaluationGenerating] = useState(false);
+  const [evaluationError, setEvaluationError] = useState<string | null>(null);
+  const [lastEvaluationPath, setLastEvaluationPath] = useState<string | null>(null);
 
   const fetchProgress = async (opts?: { isRefresh?: boolean }) => {
     if (!formattedSellCarId) {
@@ -99,6 +141,7 @@ const InspectionModulesScreen = () => {
         inspectionResResult,
         refurbResResult,
         defectsResResult,
+        testDriveReportResult,
       ] = await Promise.allSettled([
         client.get('/api/view-vehicle-details-inspection', {
           params: { sellCarId: formattedSellCarId },
@@ -110,6 +153,9 @@ const InspectionModulesScreen = () => {
           params: { sellCarId: formattedSellCarId },
         }),
         client.get('/api/view-defects-inspection', {
+          params: { sellCarId: formattedSellCarId },
+        }),
+        client.get('/api/view-test-drive-report', {
           params: { sellCarId: formattedSellCarId },
         }),
       ]);
@@ -124,6 +170,10 @@ const InspectionModulesScreen = () => {
         refurbResResult.status === 'fulfilled' ? refurbResResult.value : null;
       const defectsRes =
         defectsResResult.status === 'fulfilled' ? defectsResResult.value : null;
+      const testDriveReport =
+        testDriveReportResult.status === 'fulfilled'
+          ? testDriveReportResult.value?.data?.data?.testDriveReports?.Reports
+          : null;
 
       const extractError = (r: any) =>
         r?.reason?.response?.data?.message ||
@@ -174,6 +224,9 @@ const InspectionModulesScreen = () => {
       let engineInfo: Record<string, any> | null = null;
       let rcDetails: Record<string, any> | null = null;
       let regDetails: Record<string, any> | null = null;
+      if (inspectionRes?.data?.data?.allInspections?.[0]?.id != null) {
+        setInspectionId(inspectionRes.data.data.allInspections[0].id);
+      }
       if (vehicleRes) {
         const vehicleDetails =
           vehicleRes?.data?.data?.vehicleDetails?.vehicleDetails ||
@@ -427,7 +480,74 @@ const InspectionModulesScreen = () => {
         inspectionData?.TestDrive ||
         inspectionData?.test_drive ||
         inspectionData?.testdrive ||
-        inspectionData?.['Test Drive'];
+        inspectionData?.['Test Drive'] ||
+        testDriveReport;
+      setEngineInfoData(engineInfo || null);
+      setRegDetailsData(regDetails || null);
+      setInspectionSnapshot(inspectionData || null);
+      // Merge exterior data with local draft (needed for panel photos/status)
+      const mergePanels = (base: any, override: any) => {
+        const result: Record<string, any> = {};
+        const apply = (src: any) => {
+          if (!src) return;
+          Object.keys(src).forEach(k => {
+            result[k] = {...result[k], ...src[k]};
+          });
+        };
+        apply(base);
+        apply(override);
+        return Object.keys(result).length > 0 ? result : null;
+      };
+      let exteriorDraft: any = null;
+      try {
+        exteriorDraft = loadDraft<any>(formattedSellCarId, 'exterior');
+      } catch {
+        exteriorDraft = null;
+      }
+      const mergedExterior = {
+        ...(exteriorData || {}),
+        ...(exteriorDraft || {}),
+      };
+      const mergedPanels = mergePanels(
+        exteriorData?.panels || exteriorData?.panelStates,
+        exteriorDraft?.panels || exteriorDraft?.panelStates,
+      );
+      if (mergedPanels) {
+        mergedExterior.panels = mergedPanels;
+      }
+      setExteriorDataState(
+        mergedExterior && Object.keys(mergedExterior).length > 0
+          ? mergedExterior
+          : null,
+      );
+      // Merge interior with draft to capture local-only values
+      let interiorDraft: any = null;
+      try {
+        interiorDraft = loadDraft<any>(formattedSellCarId, 'electrical');
+      } catch {
+        interiorDraft = null;
+      }
+      setInteriorDataState({
+        ...(interiorData || {}),
+        ...(interiorDraft || {}),
+      });
+      setEngineDataState(engineData || null);
+
+      // Merge test drive with draft to capture local-only values
+      let testDriveDraft: any = null;
+      try {
+        testDriveDraft = loadDraft<any>(formattedSellCarId, 'testDrive');
+      } catch {
+        testDriveDraft = null;
+      }
+      setTestDriveDataState({
+        ...(testDriveData || {}),
+        ...(testDriveDraft || {}),
+      });
+      setFunctionsDataState(functionsData || null);
+      setFramesDataState(framesData || null);
+      setDefectsDataState(Array.isArray(defectsData) ? defectsData : []);
+      setRefurbDataState(refurbData || null);
       const hasDataFlags: Record<string, boolean> = {
         vehicleDetails: !!(engineInfo || rcDetails || regDetails),
         exterior: !!exteriorData,
@@ -815,6 +935,10 @@ const InspectionModulesScreen = () => {
         setDrivingExperience(drive);
         setRatingComment(comments);
         setPickupRemark(pickup);
+        if (evalRating.id != null) {
+          setRatingId(evalRating.id);
+        }
+        setRatingSaved(true);
       }
 
       console.log('[InspectionModules] progress snapshot', {
@@ -845,6 +969,892 @@ const InspectionModulesScreen = () => {
   useEffect(() => {
     fetchProgress();
   }, [formattedSellCarId]);
+
+  const handleSaveRating = async () => {
+    if (ratingSubmitting) return;
+    if (rating <= 0 || !drivingExperience) return;
+    setRatingSubmitting(true);
+    setRatingError(null);
+    try {
+      const payload: any = {
+        id: ratingId || formattedSellCarId,
+        sellCarId: formattedSellCarId,
+        'Evaluator Rating': String(rating),
+        'Driving Experience': drivingExperience,
+        Comments: ratingComment || '',
+        Remarks: pickupRemark || '',
+      };
+      console.log('[InspectionModules] Saving evaluator rating', payload);
+      await client.post('/api/add-evaluator-rating', payload);
+      console.log('[InspectionModules] Saved evaluator rating successfully');
+      setRatingSaved(true);
+    } catch (err: any) {
+      const msg =
+        err?.response?.data?.message || err?.message || 'Failed to save rating';
+      console.error('[InspectionModules] Failed to save evaluator rating', msg);
+      setRatingError(msg);
+      setRatingSaved(false);
+    } finally {
+      setRatingSubmitting(false);
+    }
+  };
+
+  const openSavedReport = async () => {
+    if (!lastDownloadPath) return;
+    const path = lastDownloadPath;
+    const isPrivatePath =
+      path.includes('/data/user/') || path.includes('/Android/data/');
+    const fileUrl = path.startsWith('file://') ? path : `file://${path}`;
+    try {
+      if (isPrivatePath) {
+        await Share.share({
+          title: 'Inspection report',
+          url: fileUrl,
+          message: 'Inspection report',
+        });
+      } else {
+        await Linking.openURL(fileUrl);
+      }
+    } catch (err: any) {
+      Alert.alert('Open failed', err?.message || 'Unable to open the saved file.');
+    }
+  };
+
+  const handleDownloadReport = async () => {
+    if (!formattedSellCarId) return;
+    if (reportDownloading) return;
+    setReportDownloading(true);
+    setReportError(null);
+    setLastDownloadPath(null);
+    try {
+      let useFallbackDir = false;
+      if (Platform.OS === 'android') {
+        const perm = PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE;
+        const has = await PermissionsAndroid.check(perm);
+        if (!has) {
+          const granted = await PermissionsAndroid.request(perm);
+          if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
+            useFallbackDir = true;
+          }
+        }
+      }
+      const token = (store.getState() as any)?.auth?.token;
+      const url = `https://api.marnix.in/api/generate-inspection-pdf?sellCarId=${encodeURIComponent(
+        formattedSellCarId,
+      )}`;
+      console.log('[InspectionModules] Download request', {url});
+      const authToken = token || '';
+      const authHeader =
+        authToken && !authToken.toLowerCase().startsWith('bearer')
+          ? `Bearer ${authToken}`
+          : authToken;
+      const res = await fetch(url, {
+        method: 'GET',
+        headers: {
+          Accept: 'application/pdf',
+          type: 'employee',
+          ...(authHeader ? {Authorization: authHeader} : {}),
+        },
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        throw new Error(
+          `Failed with status ${res.status}${body ? `: ${body.slice(0, 200)}` : ''}`,
+        );
+      }
+      const buffer = await res.arrayBuffer();
+      const base64 = arrayBufferToBase64(buffer);
+      if (!base64) {
+        throw new Error('Unable to process PDF content');
+      }
+      const now = new Date();
+      const datePart = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(
+        now.getDate(),
+      ).padStart(2, '0')}`;
+      const filename = `${formattedSellCarId}-${datePart}-inspection.pdf`;
+      const downloadDir =
+        (!useFallbackDir && RNFS.DownloadDirectoryPath) ||
+        RNFS.DocumentDirectoryPath ||
+        RNFS.TemporaryDirectoryPath ||
+        RNFS.CachesDirectoryPath;
+      const destPath = `${downloadDir}/${filename}`;
+      await RNFS.writeFile(destPath, base64, 'base64');
+      console.log('[InspectionModules] Report saved', destPath);
+      setLastDownloadPath(destPath);
+      Alert.alert('Report saved', `Saved to:\n${destPath}`);
+    } catch (err: any) {
+      const msg = err?.message || 'Failed to download report';
+      console.error('[InspectionModules] Download report failed', msg);
+      setReportError(msg);
+    } finally {
+      setReportDownloading(false);
+    }
+  };
+
+  const resolveVal = (obj: any, key: string) => {
+    if (!obj || !key) return '';
+    const variants = [
+      key,
+      key.toLowerCase(),
+      key.replace(/\s+/g, ''),
+      key.replace(/\s+/g, '').toLowerCase(),
+      key.replace(/\s+/g, '_'),
+      key.replace(/\s+/g, '_').toLowerCase(),
+    ];
+    for (const v of variants) {
+      if (obj[v] !== undefined && obj[v] !== null) {
+        return obj[v];
+      }
+    }
+    return '';
+  };
+
+  const isLikelyImageUri = (val: any) => {
+    if (!val) return false;
+    if (typeof val !== 'string') return false;
+    const lower = val.toLowerCase();
+    return (
+      lower.startsWith('http') ||
+      lower.startsWith('file:') ||
+      lower.startsWith('content:') ||
+      lower.includes('base64') ||
+      lower.endsWith('.jpg') ||
+      lower.endsWith('.jpeg') ||
+      lower.endsWith('.png')
+    );
+  };
+
+  const toDisplay = (val: any) => {
+    if (val == null) return '';
+    if (Array.isArray(val)) return val.filter(Boolean).join(', ');
+    if (typeof val === 'object') {
+      try {
+        return JSON.stringify(val);
+      } catch {
+        return String(val);
+      }
+    }
+    return String(val);
+  };
+
+  const yesNo = (val: any) => {
+    const str = String(val || '').trim().toLowerCase();
+    if (!str) return '';
+    if (['yes', 'y', 'true', '1', 'available', 'ok'].includes(str)) return 'Yes';
+    if (['no', 'n', 'false', '0', 'not available', 'na', 'n/a'].includes(str))
+      return 'No';
+    if (typeof val === 'boolean') return val ? 'Yes' : 'No';
+    return val;
+  };
+
+  const escapeHtml = (value: any) => {
+    const str = toDisplay(value);
+    return str
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  };
+
+  const buildAdditionalRows = (
+    obj: any,
+    excludeKeys: Set<string>,
+    labelPrefix?: string,
+  ) => {
+    const rows: { label: string; value: any }[] = [];
+    if (!obj || typeof obj !== 'object') return rows;
+    Object.keys(obj).forEach(k => {
+      if (excludeKeys.has(k)) return;
+      const val = (obj as any)[k];
+      if (
+        val == null ||
+        typeof val === 'object' ||
+        Array.isArray(val) ||
+        isLikelyImageUri(val) ||
+        /image|photo|uri|img/i.test(k)
+      ) {
+        return;
+      }
+      rows.push({
+        label: labelPrefix ? `${labelPrefix}: ${k}` : k,
+        value: val,
+      });
+    });
+    return rows;
+  };
+
+  const formatDateLabel = (val: any) => {
+    if (!val) return '';
+    const d = new Date(val);
+    if (Number.isNaN(d.getTime())) return toDisplay(val);
+    return d.toDateString();
+  };
+
+  const buildRows = (rows: { label: string; value: any }[]) => {
+    if (!rows || rows.length === 0) return '';
+    return rows
+      .map(r => {
+        const val = toDisplay(r.value);
+        const displayVal = val === '' ? '—' : val;
+        return `
+        <div class="row">
+          <div class="row-label">${escapeHtml(r.label)}</div>
+          <div class="row-value">${escapeHtml(displayVal)}</div>
+        </div>
+      `;
+      })
+      .join('');
+  };
+
+  const buildSection = (title: string, rows: { label: string; value: any }[]) => {
+    const inner = buildRows(rows);
+    if (!inner) return '';
+    return `
+      <div class="section">
+        <div class="section-title">${escapeHtml(title)}</div>
+        ${inner}
+      </div>
+    `;
+  };
+
+  const buildListSection = (title: string, items: string[]) => {
+    const list = items.filter(Boolean);
+    if (list.length === 0) return '';
+    return `
+      <div class="section">
+        <div class="section-title">${escapeHtml(title)}</div>
+        <div class="list">
+          ${list.map(i => `<div class="list-item">• ${escapeHtml(i)}</div>`).join('')}
+        </div>
+      </div>
+    `;
+  };
+
+  const normalizeUri = (val: any) => {
+    if (!val) return '';
+    if (typeof val === 'string') return val;
+    if (val.uri) return val.uri;
+    return '';
+  };
+
+  const extractImages = () => {
+    const imgs: { label: string; uri: string }[] = [];
+    const seen = new Set<string>();
+    const pushImg = (label: string, uri: any) => {
+      const norm = normalizeUri(uri);
+      if (norm) {
+        const key = norm; // dedupe strictly by uri to avoid repeats with different labels
+        if (seen.has(key)) return;
+        seen.add(key);
+        imgs.push({ label, uri: norm });
+      }
+    };
+
+    // Known, explicit fields
+    pushImg('Engine Image', engineDataState?.engineImage || engineDataState?.EngineImage);
+    const odometer = interiorDataState?.odometerImageUri || interiorDataState?.odometerImage;
+    pushImg('Interior Odometer Image', odometer);
+
+    const interiorImages =
+      interiorDataState?.interiorImages ||
+      interiorDataState?.InteriorImages ||
+      interiorDataState?.images ||
+      [];
+    if (Array.isArray(interiorImages)) {
+      interiorImages.forEach((uri: any, idx: number) =>
+        pushImg(`Interior Image ${idx + 1}`, uri),
+      );
+    }
+
+    const frameImages =
+      framesDataState?.['Frame images'] ||
+      framesDataState?.frameImages ||
+      framesDataState?.images ||
+      [];
+    if (Array.isArray(frameImages)) {
+      frameImages.forEach((uri: any, idx: number) => pushImg(`Frame ${idx + 1}`, uri));
+    }
+
+    // Defect images if present
+    defectsDataState.forEach((d: any, idx: number) => {
+      const uri = d?.uri || d?.image || d?.photo || d?.['Defect image'];
+      pushImg(`Defect ${idx + 1}`, uri);
+    });
+
+    // Vehicle document images (if present in engineInfoData or regDetailsData)
+    const docImages =
+      engineInfoData?.documents ||
+      engineInfoData?.images ||
+      regDetailsData?.documents ||
+      regDetailsData?.images ||
+      [];
+    if (Array.isArray(docImages)) {
+      docImages.forEach((uri: any, idx: number) => pushImg(`Document ${idx + 1}`, uri));
+    }
+
+    // Generic scan for obvious image keys across all module data
+    const scanForImages = (obj: any, prefix: string) => {
+      if (!obj || typeof obj !== 'object') return;
+      Object.keys(obj).forEach(k => {
+        const v = (obj as any)[k];
+        if (Array.isArray(v)) {
+          v.forEach((item, idx) => {
+            const label = `${prefix} ${k} ${idx + 1}`;
+            if (isLikelyImageUri(item) || normalizeUri(item)) {
+              pushImg(label, item);
+            } else if (item && typeof item === 'object' && normalizeUri(item.uri)) {
+              pushImg(label, item.uri);
+            }
+          });
+        } else if (typeof v === 'object' && v) {
+          if (normalizeUri((v as any).uri)) {
+            pushImg(`${prefix} ${k}`, (v as any).uri);
+          }
+        } else if (isLikelyImageUri(v) || /image|photo|uri|img/i.test(k)) {
+          pushImg(`${prefix} ${k}`, v);
+        }
+      });
+    };
+
+    scanForImages(exteriorDataState, 'Exterior');
+    const panelStates =
+      exteriorDataState?.panels ||
+      exteriorDataState?.Panels ||
+      exteriorDataState?.panelStates ||
+      {};
+    const pushPanelImg = (key: string, st: any) => {
+      if (!st) return;
+      const uri =
+        st.photoUri || st.photo || st.image || st.img || st.uri || st.url;
+      if (uri) {
+        pushImg(`Exterior Panel: ${key} (${st.status || ''})`, uri);
+      }
+    };
+    if (Array.isArray(panelStates)) {
+      panelStates.forEach((st: any, idx: number) =>
+        pushPanelImg(st?.name || `Panel ${idx + 1}`, st),
+      );
+    } else {
+      Object.keys(panelStates || {}).forEach(key => {
+        const st = (panelStates as any)[key];
+        pushPanelImg(key, st);
+      });
+    }
+    scanForImages(engineDataState, 'Engine');
+    scanForImages(functionsDataState, 'Functions');
+    scanForImages(framesDataState, 'Frames');
+    scanForImages(refurbDataState, 'Refurb');
+
+    return imgs;
+  };
+
+  const buildImageGrid = (title: string, items: { label: string; uri: string }[]) => {
+    if (!items || items.length === 0) return '';
+    const cards = items
+      .map(
+        it => `
+        <div class="img-card">
+          <img src="${escapeHtml(it.uri)}" />
+          <div class="img-label">${escapeHtml(it.label)}</div>
+        </div>
+      `,
+      )
+      .join('');
+    return `
+      <div class="section">
+        <div class="section-title">${escapeHtml(title)}</div>
+        <div class="img-grid">${cards}</div>
+      </div>
+    `;
+  };
+
+  const buildEvaluationHtml = (imagesOverride?: {label: string; uri: string}[]) => {
+    const inspectorName =
+      inspectionSnapshot?.inspectedBy?.name ||
+      inspectionSnapshot?.inspector ||
+      inspectionSnapshot?.inspectedBy ||
+      '';
+    const regNumber =
+      resolveVal(engineInfoData, 'Registration Number') ||
+      resolveVal(engineInfoData, 'RegNumber') ||
+      resolveVal(engineInfoData, 'Reg Number') ||
+      formattedSellCarId;
+    const inspectionDate =
+      inspectionSnapshot?.slotDate ||
+      inspectionSnapshot?.inspectionDate ||
+      inspectionSnapshot?.createdAt ||
+      new Date().toISOString();
+
+    const vehicleRows = [
+      { label: 'Manufacturer', value: resolveVal(engineInfoData, 'Manufacturer Name') },
+      { label: 'Chassis No.', value: resolveVal(engineInfoData, 'Chassis Number') },
+      { label: 'Chassis Embossing', value: resolveVal(engineInfoData, 'Chassis Number Embossing') },
+      { label: 'Engine Number', value: resolveVal(engineInfoData, 'Engine Number') },
+      { label: 'Engine CC', value: resolveVal(engineInfoData, 'Engine CC') },
+      { label: 'Year Of Manufacturing', value: resolveVal(engineInfoData, 'Year of Manufacturing') },
+      { label: 'Car Type', value: resolveVal(engineInfoData, 'Car Type') },
+      { label: 'Model Name', value: resolveVal(engineInfoData, 'Model Name') },
+      { label: 'Variant Name', value: resolveVal(engineInfoData, 'Variant Name') },
+      { label: 'Colour', value: resolveVal(engineInfoData, 'Colour') },
+      { label: 'Paint Type', value: resolveVal(engineInfoData, 'Paint Type') },
+      { label: 'Transmission', value: resolveVal(engineInfoData, 'Transmission') },
+      { label: 'Emission', value: resolveVal(engineInfoData, 'Emission') },
+      { label: 'Date of Registration', value: resolveVal(engineInfoData, 'Date of Registration') },
+      { label: 'Odometer Reading', value: resolveVal(engineInfoData, 'Odometer Reading') },
+      { label: 'Fuel Type', value: resolveVal(engineInfoData, 'Fuel Type') },
+      { label: 'External CNG/LPG Fitment', value: yesNo(resolveVal(engineInfoData, 'External CNG/LPG Fitment')) },
+      { label: 'No. of Owners', value: resolveVal(engineInfoData, 'No. of Owners') },
+      { label: 'Duplicate Key Available', value: yesNo(resolveVal(engineInfoData, 'Duplicate Key Available')) },
+      { label: 'VIN Plate Available', value: yesNo(resolveVal(engineInfoData, 'VIN Plate Available')) },
+      { label: 'Jack & Toolkit Available', value: yesNo(resolveVal(engineInfoData, 'Jack & Toolkit Available')) },
+      { label: 'Spare Wheel Available', value: yesNo(resolveVal(engineInfoData, 'Spare Wheel Available')) },
+      { label: 'Insurance Type', value: resolveVal(engineInfoData, 'Insurance Type') },
+      { label: 'Insurance Valid Upto', value: resolveVal(engineInfoData, 'Insurance Valid Upto') },
+    ];
+    const vehicleExtra = buildAdditionalRows(
+      engineInfoData,
+      new Set(vehicleRows.map(r => r.label)),
+      'Vehicle',
+    );
+
+    // Step 1B is intentionally skipped per requirement (RC details omitted)
+
+    const regRows = [
+      { label: 'Registration State', value: resolveVal(regDetailsData, 'Registration State') },
+      { label: 'Registration City', value: resolveVal(regDetailsData, 'Registration City') },
+      { label: 'RTO NOC Issued', value: resolveVal(regDetailsData, 'RTO NOC Issued') },
+      { label: 'Registration Valid', value: resolveVal(regDetailsData, 'Registration Valid') },
+      { label: 'Road Tax Paid', value: resolveVal(regDetailsData, 'Road Tax Paid') },
+      { label: 'Commercial Vehicle', value: yesNo(resolveVal(regDetailsData, 'Commercial Vehicle')) },
+      { label: 'Under Hypothecation', value: yesNo(resolveVal(regDetailsData, 'Under Hypothecation')) },
+      { label: 'RTO', value: resolveVal(regDetailsData, 'RTO') },
+    ];
+    const regExtra = buildAdditionalRows(
+      regDetailsData,
+      new Set(regRows.map(r => r.label)),
+      'Registration',
+    );
+
+    const engineRows = [
+      { label: 'Engine', value: yesNo(resolveVal(engineDataState, 'Engine') || resolveVal(engineDataState, 'engineWorking')) },
+      { label: 'Radiator', value: yesNo(resolveVal(engineDataState, 'Radiator')) },
+      { label: 'Silencer', value: yesNo(resolveVal(engineDataState, 'Silencer')) },
+      { label: 'Starter Motor', value: yesNo(resolveVal(engineDataState, 'Starter Motor')) },
+      { label: 'Engine Oil Level', value: yesNo(resolveVal(engineDataState, 'Engine Oil Level')) },
+      { label: 'Coolant Availability', value: yesNo(resolveVal(engineDataState, 'Coolant Availability')) },
+      { label: 'Engine Mounting', value: yesNo(resolveVal(engineDataState, 'Engine Mounting')) },
+      { label: 'Battery', value: yesNo(resolveVal(engineDataState, 'Battery')) },
+      { label: 'Engine Oil Leakage', value: yesNo(resolveVal(engineDataState, 'Engine Oil Leakage')) },
+      { label: 'Coolant Oil Leakage', value: yesNo(resolveVal(engineDataState, 'Coolant Oil Leakage')) },
+      { label: 'Abnormal Noise', value: yesNo(resolveVal(engineDataState, 'Abnormal Noise')) },
+      { label: 'Black / White Smoke', value: yesNo(resolveVal(engineDataState, 'Black Smoke') || resolveVal(engineDataState, 'Black Smoke/White Smoke')) },
+      { label: 'Defective Belts', value: yesNo(resolveVal(engineDataState, 'Defective Belts')) },
+      { label: 'Highlights', value: resolveVal(engineDataState, 'Highlight Positives') },
+      { label: 'Other Comments', value: resolveVal(engineDataState, 'Other Comments') },
+    ];
+    const engineExtra = buildAdditionalRows(
+      engineDataState,
+      new Set(engineRows.map(r => r.label)),
+      'Engine',
+    );
+
+    const exteriorTyreCounts =
+      exteriorDataState?.['Tyre Thread Count'] ||
+      exteriorDataState?.tyreValues ||
+      exteriorDataState?.tyres ||
+      {};
+    const exteriorRows: { label: string; value: any }[] = [
+      { label: 'Wheel Type', value: resolveVal(exteriorDataState, 'Wheel Type') || resolveVal(exteriorDataState, 'wheelType') },
+      { label: 'Refurbishment Cost (Tyre)', value: resolveVal(exteriorDataState, 'Refurbishment Cost (Tyre)') || resolveVal(exteriorDataState, 'tyreRefurbCost') },
+      { label: 'Exterior Refurbishment Cost', value: resolveVal(exteriorDataState, 'Exterior Refurbishment Cost') || resolveVal(exteriorDataState, 'exteriorRefurbCost') },
+      { label: 'Repaint Done', value: yesNo(resolveVal(exteriorDataState, 'Repaint Done') || resolveVal(exteriorDataState, 'repaintDone')) },
+    ];
+    Object.keys(exteriorTyreCounts || {}).forEach(k => {
+      const v = (exteriorTyreCounts as any)[k];
+      if (v) {
+        exteriorRows.push({ label: `Tyre - ${k}`, value: v });
+      }
+    });
+
+    const panelStates =
+      exteriorDataState?.panels ||
+      exteriorDataState?.Panels ||
+      exteriorDataState?.panelStates ||
+      {};
+    Object.keys(panelStates || {}).forEach(key => {
+      const st = (panelStates as any)[key];
+      if (st?.status) {
+        exteriorRows.push({ label: `Panel: ${key}`, value: st.status });
+      }
+    });
+
+    const exteriorExtra = buildAdditionalRows(
+      exteriorDataState,
+      new Set(exteriorRows.map(r => r.label)),
+      'Exterior',
+    );
+
+    const interiorRows: { label: string; value: any }[] = [
+      { label: 'Seat Cover', value: resolveVal(interiorDataState, 'seatCover') },
+      { label: 'Sun Roof', value: yesNo(resolveVal(interiorDataState, 'sunRoof')) },
+      { label: 'Car Antenna', value: yesNo(resolveVal(interiorDataState, 'carAntenna')) },
+      { label: 'Power Windows Count', value: resolveVal(interiorDataState, 'powerWindowsCount') },
+      { label: 'Airbags Count', value: resolveVal(interiorDataState, 'airBagsCount') },
+      { label: 'Power Windows Working', value: yesNo(resolveVal(interiorDataState, 'powerWindowsWorking')) },
+      { label: 'Airbags Working', value: yesNo(resolveVal(interiorDataState, 'airBagsWorking')) },
+      { label: 'Parking Brake', value: yesNo(resolveVal(interiorDataState, 'parkingBrake')) },
+      { label: 'Horn', value: yesNo(resolveVal(interiorDataState, 'horn')) },
+      { label: 'Instrument Cluster', value: yesNo(resolveVal(interiorDataState, 'instrumentCluster')) },
+      { label: 'Wiper', value: yesNo(resolveVal(interiorDataState, 'wiper')) },
+      { label: 'Head Lamp', value: yesNo(resolveVal(interiorDataState, 'headLamp')) },
+      { label: 'Tail Lamp', value: yesNo(resolveVal(interiorDataState, 'tailLamp')) },
+      { label: 'Fog Lamp', value: yesNo(resolveVal(interiorDataState, 'fogLamp')) },
+      { label: 'Cabin Light', value: yesNo(resolveVal(interiorDataState, 'cabinLight')) },
+      { label: 'Blinker Light', value: yesNo(resolveVal(interiorDataState, 'blinkerLight')) },
+      { label: 'Seat Belts', value: yesNo(resolveVal(interiorDataState, 'seatBelts')) },
+      { label: 'AC Effectiveness', value: resolveVal(interiorDataState, 'acEffectiveness') },
+      { label: 'AC Grill Efficiency', value: resolveVal(interiorDataState, 'acGrillEfficiency') },
+      { label: 'Climate Control AC', value: yesNo(resolveVal(interiorDataState, 'climateControlAC')) },
+      { label: 'Heater', value: yesNo(resolveVal(interiorDataState, 'heater')) },
+      { label: 'ORVM', value: yesNo(resolveVal(interiorDataState, 'orvm')) },
+      { label: 'Steering Mounted Controls', value: yesNo(resolveVal(interiorDataState, 'steeringMounted')) },
+      { label: 'ABS', value: yesNo(resolveVal(interiorDataState, 'abs')) },
+      { label: 'Reverse Sensors', value: yesNo(resolveVal(interiorDataState, 'reverseSensors')) },
+      { label: 'Reverse Camera', value: yesNo(resolveVal(interiorDataState, 'reverseCamera')) },
+      { label: 'Keyless Locking', value: yesNo(resolveVal(interiorDataState, 'keylessLocking')) },
+      { label: 'Music System', value: yesNo(resolveVal(interiorDataState, 'musicSystemWorking')) },
+      { label: 'Music System Details', value: resolveVal(interiorDataState, 'musicSystemDetails') },
+      { label: 'Refurbishment Cost', value: resolveVal(interiorDataState, 'refurbishmentCost') },
+    ];
+    const interiorExtra = buildAdditionalRows(
+      interiorDataState,
+      new Set(interiorRows.map(r => r.label)),
+      'Interior',
+    );
+
+    const functionsRows: { label: string; value: any }[] = [
+      { label: 'Steering', value: yesNo(resolveVal(functionsDataState, 'steering') || resolveVal(functionsDataState, 'Steering')) },
+      { label: 'Suspension', value: yesNo(resolveVal(functionsDataState, 'suspension') || resolveVal(functionsDataState, 'Suspension')) },
+      { label: 'Brake', value: yesNo(resolveVal(functionsDataState, 'brake') || resolveVal(functionsDataState, 'Brake')) },
+      { label: 'Gear Shifting', value: yesNo(resolveVal(functionsDataState, 'gearShifting') || resolveVal(functionsDataState, 'Gear Shifting')) },
+      { label: 'Drive Shaft / Axle', value: yesNo(resolveVal(functionsDataState, 'driveShaft') || resolveVal(functionsDataState, 'Drive Shaft/ Axle')) },
+      { label: 'Clutch', value: yesNo(resolveVal(functionsDataState, 'clutch') || resolveVal(functionsDataState, 'Clutch')) },
+      { label: 'Wheel Bearing Noise', value: yesNo(resolveVal(functionsDataState, 'wheelBearingNoise') || resolveVal(functionsDataState, 'Wheel Bearing Noise')) },
+      { label: 'Gear Box Noise', value: yesNo(resolveVal(functionsDataState, 'gearBoxNoise') || resolveVal(functionsDataState, 'Gear Box Noise')) },
+      { label: 'Transmission / Differential Oil Leakage', value: yesNo(resolveVal(functionsDataState, 'transmissionLeakage') || resolveVal(functionsDataState, 'Transmission/ Differential Oil Leakage')) },
+      { label: 'Differential Noise', value: yesNo(resolveVal(functionsDataState, 'differentialNoise') || resolveVal(functionsDataState, 'Differential Noise')) },
+      { label: 'Refurbishment Cost', value: resolveVal(functionsDataState, 'refurbCost') || resolveVal(functionsDataState, 'Refurbishment Cost') },
+    ];
+    const functionsExtra = buildAdditionalRows(
+      functionsDataState,
+      new Set(functionsRows.map(r => r.label)),
+      'Functions',
+    );
+
+    const frameRows: { label: string; value: any }[] = [];
+    const anyDamage = framesDataState?.['Any Damage In'] || framesDataState?.anyDamageIn || framesDataState?.anyDamage;
+    if (anyDamage) {
+      const front = anyDamage.Front || anyDamage.front || {};
+      const pillars = anyDamage.Pillars || anyDamage.pillars || {};
+      const rear = anyDamage.Rear || anyDamage.rear || {};
+      Object.keys(front || {}).forEach(k => frameRows.push({ label: `Front - ${k}`, value: yesNo(front[k]) }));
+      Object.keys(pillars || {}).forEach(k => frameRows.push({ label: `Pillars - ${k}`, value: yesNo(pillars[k]) }));
+      Object.keys(rear || {}).forEach(k => frameRows.push({ label: `Rear - ${k}`, value: yesNo(rear[k]) }));
+    }
+    if (framesDataState?.['Flood Affected Vehicle']) {
+      frameRows.push({
+        label: 'Flood Affected Vehicle',
+        value: yesNo(framesDataState?.['Flood Affected Vehicle']),
+      });
+    }
+    const frameExtra = buildAdditionalRows(
+      framesDataState,
+      new Set(frameRows.map(r => r.label)),
+      'Frames',
+    );
+
+
+    const tdRows = [
+      {
+        label: 'Test Drive Complete',
+        value:
+          yesNo(
+            resolveVal(testDriveDataState, 'isComplete') ||
+              resolveVal(testDriveDataState, 'testDriveCompleted') ||
+              resolveVal(testDriveDataState, 'Test Drive Completed'),
+          ) || '',
+      },
+      {
+        label: 'Driving Experience',
+        value:
+          resolveVal(testDriveDataState, 'drivingExperience') ||
+          resolveVal(testDriveDataState, 'Driving Experience') ||
+          resolveVal(testDriveDataState, 'Experience') ||
+          drivingExperience,
+      },
+      {
+        label: 'Problems',
+        value: toDisplay(
+          (() => {
+            const prob =
+              resolveVal(testDriveDataState, 'problems') ||
+              resolveVal(testDriveDataState, 'problem') ||
+              resolveVal(testDriveDataState, 'problems') ||
+              resolveVal(testDriveDataState, 'problem') ||
+              resolveVal(testDriveDataState, 'Problem') ||
+              resolveVal(testDriveDataState, 'Specify the Problem');
+            if (Array.isArray(prob)) return prob;
+            if (typeof prob === 'string') return prob.split(',').map(s => s.trim());
+            return prob;
+          })(),
+        ),
+      },
+      {
+        label: 'Incomplete Reason',
+        value:
+          resolveVal(testDriveDataState, 'incompleteReason') ||
+          resolveVal(testDriveDataState, 'incompleteReason') ||
+          resolveVal(testDriveDataState, 'Incomplete Reason') ||
+          resolveVal(testDriveDataState, 'Incomplete Test Drive') ||
+          resolveVal(testDriveDataState, 'Reason'),
+      },
+      {
+        label: 'Kms Driven',
+        value:
+          resolveVal(testDriveDataState, 'kmsDriven') ||
+          resolveVal(testDriveDataState?.['Drive Details'] || testDriveDataState, "Km's Driven") ||
+          resolveVal(testDriveDataState?.['Drive Details'] || testDriveDataState, 'Kms Driven') ||
+          resolveVal(testDriveDataState?.['Drive Details'] || testDriveDataState, 'kmsDriven') ||
+          resolveVal(testDriveDataState?.['Drive Details'] || testDriveDataState, 'Km Driven'),
+      },
+      {
+        label: 'Time Taken',
+        value:
+          resolveVal(testDriveDataState, 'timeTaken') ||
+          resolveVal(testDriveDataState?.['Drive Details'] || testDriveDataState, 'Time Taken') ||
+          resolveVal(testDriveDataState?.['Drive Details'] || testDriveDataState, 'timeTaken'),
+      },
+      {
+        label: 'Remarks',
+        value:
+          pickupRemark ||
+          resolveVal(testDriveDataState, 'remarks') ||
+          resolveVal(testDriveDataState, 'Remarks') ||
+          resolveVal(testDriveDataState, 'Additional Remarks'),
+      },
+    ];
+
+    const ratingRows = [
+      { label: 'Evaluator Rating', value: ratingSaved ? `${rating}/5` : '' },
+      { label: 'Evaluator Comment', value: ratingComment },
+      { label: 'Pickup Remark', value: pickupRemark },
+    ];
+
+    const refurbRows: { label: string; value: any }[] = [
+      { label: 'Total Refurbishment Cost', value: refurbTotal },
+    ];
+    if (refurbDataState && typeof refurbDataState === 'object') {
+      Object.entries(refurbDataState).forEach(([k, v]) => {
+        if (v == null || typeof v === 'object') {
+          return;
+        }
+        refurbRows.push({ label: k, value: v });
+      });
+    }
+
+    const defects = (defectsDataState || []).map((d: any, idx: number) => {
+      const remark = d?.Remark || d?.remark || d?.['Defect image'] || '';
+      return remark ? `${idx + 1}. ${remark}` : '';
+    });
+
+    const images = imagesOverride || extractImages();
+
+    const sections = [
+      `
+        <div class="header">
+          <div class="title">INSPECTION REPORT</div>
+          <div class="meta">Evaluated By: ${escapeHtml(inspectorName || 'N/A')}</div>
+          <div class="meta">Inspection Date: ${escapeHtml(formatDateLabel(inspectionDate) || '')}</div>
+          <div class="meta">Reg. No.: ${escapeHtml(regNumber || '')}</div>
+        </div>
+      `,
+      buildSection('Vehicle Details', [...vehicleRows, ...vehicleExtra]),
+      buildSection('Registration Details', [...regRows, ...regExtra]),
+      buildSection('Exterior', [...exteriorRows, ...exteriorExtra]) +
+        buildImageGrid(
+          'Exterior Images',
+          images.filter(img => img.label.startsWith('Exterior')),
+        ),
+      buildSection('Electrical + Interior', [...interiorRows, ...interiorExtra]) +
+        buildImageGrid(
+          'Electrical + Interior Images',
+          images.filter(img => img.label.startsWith('Interior')),
+        ),
+      buildSection('Engine Inspection', [...engineRows, ...engineExtra]),
+      buildSection('Test Drive', tdRows),
+      buildSection('Functions', [...functionsRows, ...functionsExtra]),
+      buildSection('Frames', [...frameRows, ...frameExtra]),
+      buildSection('Rating & Remarks', ratingRows),
+      buildSection('Refurbishment', refurbRows),
+      buildListSection('Defects', defects),
+      buildImageGrid(
+        'Inspection Images',
+        images.filter(
+          img =>
+            !img.label.startsWith('Exterior') &&
+            !img.label.startsWith('Interior'),
+        ),
+      ),
+    ]
+      .filter(Boolean)
+      .join('');
+
+    return `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <style>
+            * { box-sizing: border-box; }
+            body { font-family: Arial, sans-serif; padding: 12px; color: #111827; }
+            .header { margin-bottom: 12px; padding: 12px; border: 1px solid #e5e7eb; border-radius: 10px; background: #f9fafb; }
+            .title { font-size: 18px; font-weight: 800; margin-bottom: 4px; color: #111827; }
+            .meta { font-size: 12px; color: #374151; }
+            .section { border: 1px solid #e5e7eb; border-radius: 10px; margin-bottom: 12px; overflow: hidden; }
+            .section-title { background: #f3f4f6; padding: 8px 12px; font-weight: 700; font-size: 13px; color: #111827; }
+            .row { display: flex; padding: 8px 12px; border-top: 1px solid #f3f4f6; }
+            .row:first-of-type { border-top: none; }
+            .row-label { width: 42%; font-size: 11px; color: #6b7280; padding-right: 8px; }
+            .row-value { flex: 1; font-size: 12px; font-weight: 600; color: #111827; }
+            .list { padding: 10px 12px; }
+            .list-item { font-size: 12px; color: #111827; margin-bottom: 6px; }
+            .img-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; padding: 12px; }
+            .img-card { border: 1px solid #e5e7eb; border-radius: 10px; overflow: hidden; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,0.04); }
+            .img-card img { width: 100%; height: 180px; object-fit: cover; display: block; }
+            .img-label { padding: 8px; text-align: center; font-size: 12px; font-weight: 600; color: #374151; }
+          </style>
+        </head>
+        <body>
+          ${sections}
+        </body>
+      </html>
+    `;
+  };
+
+  const handleGenerateEvaluation = async () => {
+    if (!formattedSellCarId) return;
+    if (evaluationGenerating) return;
+    setEvaluationGenerating(true);
+    setEvaluationError(null);
+    setLastEvaluationPath(null);
+    try {
+      const rawImages = extractImages();
+      const preparedImages = await Promise.all(
+        rawImages.map(async img => {
+          const uri = img.uri || '';
+          const isData = uri.startsWith('data:');
+          const isHttp = uri.startsWith('http');
+          if (isData || isHttp) {
+            return img;
+          }
+          try {
+            const path =
+              uri.startsWith('file://') || uri.startsWith('content://')
+                ? uri.replace('file://', '')
+                : uri;
+            const b64 = await RNFS.readFile(path, 'base64');
+            return {...img, uri: `data:image/jpeg;base64,${b64}`};
+          } catch (err) {
+            console.warn('Failed to inline image for PDF', {uri, err});
+            return img;
+          }
+        }),
+      );
+
+      const html = buildEvaluationHtml(preparedImages);
+      if (!html) {
+        throw new Error('Unable to build evaluation report');
+      }
+      const now = new Date();
+      const datePart = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(
+        now.getDate(),
+      ).padStart(2, '0')}`;
+      const fileName = `${formattedSellCarId}-${datePart}-evaluation`;
+      const pdfModule: any =
+        (RNHTMLtoPDF as any)?.convert ? RNHTMLtoPDF : (RNHTMLtoPDF as any)?.default;
+      if (!pdfModule || typeof pdfModule.convert !== 'function') {
+        throw new Error(
+          'PDF module unavailable. Please rebuild the app after installing react-native-html-to-pdf.',
+        );
+      }
+      const pdf = await pdfModule.convert({
+        html,
+        fileName,
+        directory: 'Documents',
+      });
+      let savedPath = pdf.filePath || '';
+
+      // If available, move to a public downloads location for easier access.
+      const downloadDir =
+        RNFS.DownloadDirectoryPath ||
+        RNFS.DocumentDirectoryPath ||
+        RNFS.TemporaryDirectoryPath ||
+        RNFS.CachesDirectoryPath;
+      const targetPath = downloadDir
+        ? `${downloadDir}/${fileName}.pdf`
+        : savedPath;
+      if (savedPath && targetPath && savedPath !== targetPath) {
+        try {
+          await RNFS.moveFile(savedPath, targetPath);
+          savedPath = targetPath;
+        } catch {
+          try {
+            await RNFS.copyFile(savedPath, targetPath);
+            savedPath = targetPath;
+          } catch (err) {
+            console.warn('Failed to move evaluation PDF, keeping original path', err);
+          }
+        }
+      }
+
+      setLastEvaluationPath(savedPath || null);
+      Alert.alert(
+        'Evaluation saved',
+        savedPath
+          ? `Evaluation PDF saved to:\n${savedPath}`
+          : 'Evaluation PDF generated.',
+      );
+    } catch (err: any) {
+      const msg =
+        err?.message ||
+        (typeof err === 'object' ? JSON.stringify(err) : String(err)) ||
+        'Failed to generate evaluation PDF';
+      console.error('[InspectionModules] Evaluation PDF failed', {
+        message: msg,
+        stack: err?.stack,
+        err,
+      });
+      setEvaluationError(`PDF generation failed: ${msg}`);
+    } finally {
+      setEvaluationGenerating(false);
+    }
+  };
+
+  const openSavedEvaluation = async () => {
+    if (!lastEvaluationPath) return;
+    const path = lastEvaluationPath;
+    const fileUrl = path.startsWith('file://') ? path : `file://${path}`;
+    try {
+      await Share.share({
+        title: 'Evaluation report',
+        url: fileUrl,
+        message: 'Evaluation report',
+      });
+    } catch (err: any) {
+      Alert.alert('Open failed', err?.message || 'Unable to open the evaluation file.');
+    }
+  };
 
   const openModule = (key: string) => {
     if (!formattedSellCarId) {
@@ -980,30 +1990,112 @@ const InspectionModulesScreen = () => {
                 placeholderTextColor="#9ca3af"
                 multiline
               />
-              <Pressable
-                disabled={rating <= 0 || !drivingExperience}
-                style={[
-                  styles.ratingSaveBtn,
-                  ratingSaved && styles.ratingSaveBtnSuccess,
-                  (rating <= 0 || !drivingExperience) && styles.ratingSaveBtnDisabled,
-                ]}
-                onPress={() => {
-                  if (rating <= 0 || !drivingExperience) return;
-                  setRatingSaved(true);
-                }}>
-                {ratingSaved ? (
-                  <View style={styles.ratingSaveInner}>
-                    <View style={styles.ratingSaveIconOnly}>
-                      <FileText size={20} color={PRIMARY} strokeWidth={2.2} />
+              <View style={styles.actionRow}>
+                <Pressable
+                  disabled={
+                    evaluationGenerating ||
+                    ratingSubmitting ||
+                    reportDownloading ||
+                    !ratingSaved
+                  }
+                  style={[
+                    styles.evaluationBtn,
+                    (!ratingSaved || evaluationGenerating || ratingSubmitting || reportDownloading) &&
+                      styles.evaluationBtnDisabled,
+                  ]}
+                  onPress={handleGenerateEvaluation}>
+                  <Text style={styles.evaluationBtnText}>
+                    {evaluationGenerating ? 'Building...' : 'Evaluation'}
+                  </Text>
+                </Pressable>
+
+                <Pressable
+                  disabled={
+                    ratingSubmitting ||
+                    reportDownloading ||
+                    rating <= 0 ||
+                    !drivingExperience
+                  }
+                  style={[
+                    styles.ratingSaveBtn,
+                    ratingSaved && styles.ratingSaveBtnSuccess,
+                    (ratingSubmitting ||
+                      reportDownloading ||
+                      rating <= 0 ||
+                      !drivingExperience) &&
+                      styles.ratingSaveBtnDisabled,
+                  ]}
+                  onPress={ratingSaved ? handleDownloadReport : handleSaveRating}>
+                  {ratingSaved ? (
+                    <View style={styles.ratingSaveInner}>
+                      <View style={styles.ratingSaveIconOnly}>
+                        <FileText size={20} color={PRIMARY} strokeWidth={2.2} />
+                      </View>
+                      <Text style={styles.ratingSaveLabel}>
+                        {reportDownloading ? 'Preparing...' : 'Download Report'}
+                      </Text>
                     </View>
-                    <Text style={styles.ratingSaveLabel}>Download Report</Text>
-                  </View>
-                ) : (
-                  <View style={styles.ratingSaveIconOnly}>
-                    <Check size={20} color={PRIMARY} strokeWidth={4} />
-                  </View>
-                )}
-              </Pressable>
+                  ) : (
+                    <View style={styles.ratingSaveIconOnly}>
+                      <Check size={20} color={PRIMARY} strokeWidth={4} />
+                    </View>
+                  )}
+                </Pressable>
+              </View>
+
+              {evaluationError ? (
+                <View style={styles.statusRow}>
+                  <Text style={styles.statusError}>
+                    {evaluationError.length > 80
+                      ? `${evaluationError.slice(0, 80)}...`
+                      : evaluationError}
+                  </Text>
+                  <Pressable
+                    style={styles.statusRetry}
+                    onPress={handleGenerateEvaluation}
+                    disabled={evaluationGenerating}>
+                    <Text style={styles.statusRetryText}>
+                      {evaluationGenerating ? 'Retrying...' : 'Retry'}
+                    </Text>
+                  </Pressable>
+                </View>
+              ) : null}
+              {lastEvaluationPath ? (
+                <View style={styles.statusRow}>
+                  <Text style={styles.statusSuccess}>
+                    Evaluation: {lastEvaluationPath}
+                  </Text>
+                  <Pressable style={styles.statusRetry} onPress={openSavedEvaluation}>
+                    <Text style={styles.statusRetryText}>Open / Export</Text>
+                  </Pressable>
+                </View>
+              ) : null}
+
+              {reportError ? (
+                <View style={styles.statusRow}>
+                  <Text style={styles.statusError}>
+                    {reportError.length > 80 ? `${reportError.slice(0, 80)}...` : reportError}
+                  </Text>
+                  <Pressable
+                    style={styles.statusRetry}
+                    onPress={handleDownloadReport}
+                    disabled={reportDownloading}>
+                    <Text style={styles.statusRetryText}>
+                      {reportDownloading ? 'Retrying...' : 'Retry'}
+                    </Text>
+                  </Pressable>
+                </View>
+              ) : null}
+              {lastDownloadPath ? (
+                <View style={styles.statusRow}>
+                  <Text style={styles.statusSuccess}>
+                    Saved to: {lastDownloadPath}
+                  </Text>
+                  <Pressable style={styles.statusRetry} onPress={openSavedReport}>
+                    <Text style={styles.statusRetryText}>Open / Export</Text>
+                  </Pressable>
+                </View>
+              ) : null}
             </View>
           ) : null}
 
@@ -1399,8 +2491,33 @@ const styles = StyleSheet.create({
     color: '#111827',
     textAlignVertical: 'top',
   },
-  ratingSaveBtn: {
+  actionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
     marginTop: 10,
+  },
+  evaluationBtn: {
+    minHeight: 38,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: PRIMARY,
+    backgroundColor: '#ffffff',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  evaluationBtnDisabled: {
+    opacity: 0.5,
+  },
+  evaluationBtnText: {
+    color: PRIMARY,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  ratingSaveBtn: {
+    marginTop: 0,
     alignSelf: 'flex-start',
     minHeight: 44,
     paddingHorizontal: 14,
@@ -1430,9 +2547,32 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
   },
-  ratingSaveText: {
+  statusRow: {
+    marginTop: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  statusError: {
+    color: '#b91c1c',
+    fontSize: 12,
+    flexShrink: 1,
+  },
+  statusSuccess: {
+    color: '#059669',
+    fontSize: 12,
+    flexShrink: 1,
+  },
+  statusRetry: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 10,
+    backgroundColor: '#111827',
+  },
+  statusRetryText: {
     color: '#fff',
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '700',
   },
 });

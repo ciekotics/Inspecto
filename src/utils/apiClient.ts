@@ -82,7 +82,9 @@ const runRequest = async (args: any) => {
     });
     throw err;
   });
-  return {data: result};
+  const body = (result as any)?.body ?? result;
+  const headers = (result as any)?.headers;
+  return {data: body, headers};
 };
 
 export const client = {
