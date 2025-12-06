@@ -1490,6 +1490,15 @@ const InspectionModulesScreen = () => {
       { label: 'Defective Belts', value: yesNo(resolveVal(engineDataState, 'Defective Belts')) },
       { label: 'Highlights', value: resolveVal(engineDataState, 'Highlight Positives') },
       { label: 'Other Comments', value: resolveVal(engineDataState, 'Other Comments') },
+      {
+        label: 'Engine Refurbishment Cost (Total)',
+        value:
+          resolveVal(engineDataState, 'Refurbishment Cost (Total)') ||
+          resolveVal(engineDataState, 'Engine Refurbishment Cost') ||
+          resolveVal(engineDataState, 'Refurbishment Cost') ||
+          resolveVal(engineDataState, 'engineCost') ||
+          resolveVal(engineDataState, 'engineCostTotal'),
+      },
     ];
     const engineExtra = buildAdditionalRows(
       engineDataState,
