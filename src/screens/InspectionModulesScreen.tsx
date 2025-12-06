@@ -1734,18 +1734,6 @@ const InspectionModulesScreen = () => {
       { label: 'Pickup Remark', value: pickupRemark },
     ];
 
-    const refurbRows: { label: string; value: any }[] = [
-      { label: 'Total Refurbishment Cost', value: refurbTotal },
-    ];
-    if (refurbDataState && typeof refurbDataState === 'object') {
-      Object.entries(refurbDataState).forEach(([k, v]) => {
-        if (v == null || typeof v === 'object') {
-          return;
-        }
-        refurbRows.push({ label: k, value: v });
-      });
-    }
-
     const images = imagesOverride || extractImages();
     const frameImages = images.filter(img => /^frame/i.test(img.label || ''));
     const exteriorImages = images.filter(img => img.label.startsWith('Exterior'));
@@ -1776,7 +1764,122 @@ const InspectionModulesScreen = () => {
       buildSection('Frames', [...frameRows, ...frameExtra]) +
         buildImageGrid('Frame Images', frameImages),
       buildSection('Rating & Remarks', ratingRows),
-      buildSection('Refurbishment', refurbRows),
+      (() => {
+        const refurbSourceRaw = refurbDataState || {};
+        const refurbSource =
+          (refurbSourceRaw as any)?.['Total RF Cost'] &&
+          typeof (refurbSourceRaw as any)['Total RF Cost'] === 'object'
+            ? (refurbSourceRaw as any)['Total RF Cost']
+            : refurbSourceRaw;
+        const docCosts = refurbSource?.Document || refurbSource?.document || {};
+        const otherCosts =
+          refurbSource?.['Other Refurbishment Cost'] || refurbSource?.other || {};
+        const firstNonEmpty = (...vals: any[]) => {
+          for (const v of vals) {
+            if (v !== undefined && v !== null && `${v}`.toString().trim() !== '') {
+              return v;
+            }
+          }
+          return '';
+        };
+        const refurbEstimateRows = [
+          {
+            label: 'Engine Refurbishment Cost',
+            value: firstNonEmpty(
+              resolveVal(refurbSource, 'Engine Refurbishment Cost'),
+              resolveVal(engineDataState, 'Refurbishment Cost (Total)'),
+              resolveVal(engineDataState, 'Refurbishment Cost'),
+              resolveVal(engineDataState, 'refurbCost'),
+            ),
+          },
+          {
+            label: 'Functions Refurbishment Cost',
+            value: firstNonEmpty(
+              resolveVal(refurbSource, 'Functions Refurbishment Cost'),
+              resolveVal(functionsSource, 'Refurbishment Cost'),
+              resolveVal(functionsDataState, 'Refurbishment Cost'),
+              resolveVal(functionsDataState, 'refurbCost'),
+            ),
+          },
+          {
+            label: 'Frames Refurbishment Cost',
+            value: firstNonEmpty(
+              resolveVal(refurbSource, 'Frames Refurbishment Cost'),
+              resolveVal(framesDataState, 'Refurbishment Cost'),
+              resolveVal(framesDataState, 'refurbCost'),
+            ),
+          },
+          {
+            label: 'Exterior Refurbishment Cost',
+            value: firstNonEmpty(
+              resolveVal(refurbSource, 'Exterior Refurbishment Cost'),
+              resolveVal(exteriorDataState, 'Exterior Refurbishment Cost'),
+              resolveVal(exteriorDataState, 'refurbCost'),
+            ),
+          },
+          {
+            label: 'Tyre/Wheel Refurbishment Cost',
+            value: firstNonEmpty(
+              resolveVal(refurbSource, 'Tyre/Wheel Refurbishment Cost'),
+              resolveVal(exteriorDataState, 'Refurbishment Cost (Tyre)'),
+              resolveVal(exteriorDataState, 'Refurbishment Cost - Tyre'),
+              resolveVal(exteriorDataState, 'tyreRefurbCost'),
+            ),
+          },
+          {
+            label: 'Interior Refurbishment Cost',
+            value: firstNonEmpty(
+              resolveVal(refurbSource, 'Interior Refurbishment Cost'),
+              resolveVal(interiorDataState, 'Refurbishment Cost'),
+              resolveVal(interiorDataState, 'Interior Refurbishment Cost'),
+              resolveVal(interiorDataState, 'refurbishmentCost'),
+            ),
+          },
+        ];
+        const documentRows = [
+          { label: 'Insurance Cost', value: resolveVal(docCosts, 'Insurance Cost') },
+          { label: 'Pollution Cost', value: resolveVal(docCosts, 'Pollution Cost') },
+          {
+            label: 'Registration/ Doc Cost',
+            value: resolveVal(docCosts, 'Registration/ Doc Cost'),
+          },
+        ];
+        const otherRows = [
+          { label: 'Spare Keys', value: resolveVal(otherCosts, 'Spare Keys') },
+          {
+            label: 'Interior Cleaning',
+            value: resolveVal(otherCosts, 'Interior Cleaning'),
+          },
+          {
+            label: 'Accessories Repair',
+            value: resolveVal(otherCosts, 'Accessories Repair'),
+          },
+          {
+            label: 'Popular Work Demand',
+            value: resolveVal(otherCosts, 'Popular Work Demand'),
+          },
+          {
+            label: 'Rubbing & Polishing',
+            value: resolveVal(otherCosts, 'Rubbing & Polishing'),
+          },
+        ];
+        const totalRow = [
+          {
+            label: 'Total RF Cost',
+            value: firstNonEmpty(
+              resolveVal(refurbSource, 'Total RF Cost'),
+              resolveVal(refurbSourceRaw, 'Total RF Cost'),
+              refurbTotal,
+            ),
+          },
+        ];
+        return [
+          buildSection('Refurbishment Cost Estimate', refurbEstimateRows),
+          buildSection('Documents Cost', documentRows),
+          buildSection('Other Refurbishment Cost', otherRows),
+          buildSection('Total RF Cost', totalRow),
+        ].join('');
+      })(),
       buildDefectsSection(defectsDataState || [], images),
     ]
       .filter(Boolean)
