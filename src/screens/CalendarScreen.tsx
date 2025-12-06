@@ -1,4 +1,4 @@
-import React, {useEffect, useMemo, useState} from 'react';
+import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {
   SafeAreaView,
   View,
@@ -8,9 +8,10 @@ import {
   Pressable,
   Animated,
   RefreshControl,
+  Easing,
 } from 'react-native';
 import {useNavigation} from '@react-navigation/native';
-import {Calendar, ChevronLeft, ChevronRight, Star} from 'lucide-react-native';
+import {Calendar, ChevronLeft, ChevronRight, Star, X} from 'lucide-react-native';
 import {PRIMARY} from '../utils/theme';
 import {client} from '../utils/apiClient';
 import {useAppDispatch, useAppSelector} from '../store/hooks';
@@ -100,10 +101,32 @@ export default function CalendarScreen() {
   const dispatch = useAppDispatch();
   const monthAnim = React.useRef(new Animated.Value(0)).current;
   const detailAnim = React.useRef(new Animated.Value(0)).current;
+  const completionAnim = useRef(new Animated.Value(0)).current;
+  const completionSeen = useRef(false);
   const monthDays = useMemo(() => {
     const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
     return Array.from({length: daysInMonth}, (_, i) => i + 1);
   }, [currentMonth, currentYear]);
+
+  useEffect(() => {
+    const statusStr =
+      (detailSlot?.status || detailData?.currentStatus || '')?.toString?.() ||
+      '';
+    const isCompleted = statusStr.toLowerCase().includes('completed');
+    if (detailVisible && isCompleted && !completionSeen.current) {
+      completionSeen.current = true;
+      completionAnim.setValue(0);
+      Animated.timing(completionAnim, {
+        toValue: 1,
+        duration: 800,
+        easing: Easing.linear,
+        useNativeDriver: false,
+      }).start();
+    } else if (!detailVisible) {
+      completionSeen.current = false;
+      completionAnim.setValue(0);
+    }
+  }, [detailVisible, detailSlot, detailData, completionAnim]);
 
   useEffect(() => {
     const maxDay = monthDays[monthDays.length - 1] || TODAY_DAY;
@@ -1062,7 +1085,7 @@ export default function CalendarScreen() {
                     ) : null}
                   </View>
                   <Pressable onPress={closeDetail} hitSlop={12}>
-                    <Text style={styles.detailClose}>X</Text>
+                    <X size={18} color="#6b7280" strokeWidth={2.2} />
                   </Pressable>
                 </View>
 
@@ -1168,43 +1191,115 @@ export default function CalendarScreen() {
                       </View>
                   ) : null}
 
-                    {detailData?.currentRemark ? (
-                      <View style={styles.detailRemarksBlock}>
-                        <Text style={styles.detailRemarksTitle}>Remark</Text>
+                    {(() => {
+                      const statusStr =
+                        (detailSlot?.status ||
+                          detailData?.currentStatus ||
+                          '')?.toString?.() || '';
+                      const isCompleted = statusStr
+                        .toLowerCase()
+                        .includes('completed');
+                      const targetId =
+                        detailSlot?.sellCarId || detailSlot?.id;
+                      const redRow = detailData?.currentRemark ? (
                         <View style={styles.remarkRow}>
                           <View style={styles.remarkDot} />
                           <Text style={styles.remarkText}>
                             {detailData.currentRemark}
                           </Text>
                         </View>
-                      </View>
-                    ) : null}
+                      ) : null;
+                      const greenRow = isCompleted ? (
+                        <>
+                          {redRow ? (
+                            <Animated.View
+                              style={[
+                                styles.remarkConnector,
+                                {
+                                  transform: [{scaleY: completionAnim}],
+                                  opacity: completionAnim,
+                                },
+                              ]}
+                            />
+                          ) : null}
+                          <View style={styles.remarkRow}>
+                            <View style={styles.remarkDotGreen} />
+                            <Text
+                              style={[styles.remarkText, styles.remarkTextGreen]}>
+                              Inspection Done
+                            </Text>
+                          </View>
+                        </>
+                      ) : null;
+                      const remarksBlock =
+                        detailData?.currentRemark || isCompleted ? (
+                          <View style={styles.detailRemarksBlock}>
+                            <Text style={styles.detailRemarksTitle}>Remark</Text>
+                            {redRow}
+                            {greenRow}
+                          </View>
+                        ) : null;
 
-                    <View style={styles.detailButtonRow}>
-                      <Pressable
-                        style={styles.detailButton}
-                        onPress={closeDetail}
-                        android_ripple={{color: 'rgba(0,0,0,0.08)'}}>
-                        <Text style={styles.detailButtonText}>Close</Text>
-                      </Pressable>
-                      <Pressable
-                        style={[styles.detailButton, styles.detailButtonPrimary]}
-                        onPress={() => {
-                          const targetId =
-                            detailSlot?.sellCarId || detailSlot?.id;
-                          closeDetail();
-                          if (targetId) {
-                            navigation.navigate('Inspection', {
-                              sellCarId: targetId,
-                            });
-                          }
-                        }}
-                        android_ripple={{color: 'rgba(255,255,255,0.12)'}}>
-                        <Text style={styles.detailButtonTextPrimary}>
-                          Begin inspection
-                        </Text>
-                      </Pressable>
-                    </View>
+                      if (isCompleted) {
+                        return (
+                          <>
+                            {remarksBlock}
+                            <View style={styles.detailInfoRow}>
+                              <Text style={styles.detailInfoText}>
+                                Inspection completed. View or edit details.
+                              </Text>
+                            </View>
+                            <View style={styles.detailButtonRow}>
+                              <Pressable
+                                style={[styles.detailButton, styles.detailButtonHalf]}
+                                onPress={closeDetail}
+                                android_ripple={{color: 'rgba(0,0,0,0.08)'}}>
+                                <Text style={styles.detailButtonText}>Close</Text>
+                              </Pressable>
+                              <Pressable
+                                style={[styles.detailButton, styles.detailButtonPrimary, styles.detailButtonHalfRight]}
+                                onPress={() => {
+                                  closeDetail();
+                                  if (targetId) {
+                                    navigation.navigate('Inspection', {
+                                      sellCarId: targetId,
+                                    });
+                                  }
+                                }}
+                                android_ripple={{color: 'rgba(255,255,255,0.12)'}}>
+                                <Text style={styles.detailButtonTextPrimary}>Click to view</Text>
+                              </Pressable>
+                            </View>
+                          </>
+                        );
+                      }
+                      return (
+                        <>
+                          {remarksBlock}
+                          <View style={styles.detailButtonRow}>
+                            <Pressable
+                              style={styles.detailButton}
+                              onPress={closeDetail}
+                              android_ripple={{color: 'rgba(0,0,0,0.08)'}}>
+                              <Text style={styles.detailButtonText}>Close</Text>
+                            </Pressable>
+                            <Pressable
+                              style={[styles.detailButton, styles.detailButtonPrimary]}
+                              onPress={() => {
+                                closeDetail();
+                                if (targetId) {
+                                  navigation.navigate('Inspection', {
+                                    sellCarId: targetId,
+                                  });
+                                }
+                              }}
+                              android_ripple={{color: 'rgba(255,255,255,0.12)'}}>
+                              <Text style={styles.detailButtonTextPrimary}>Begin inspection</Text>
+                            </Pressable>
+                          </View>
+                        </>
+                      );
+                    })()}
                   </>
                 )}
               </ScrollView>
@@ -1644,6 +1739,19 @@ const styles = StyleSheet.create({
     color: '#b91c1c',
     marginTop: 4,
   },
+  detailInfoRow: {
+    padding: 12,
+    marginTop: 6,
+    marginBottom: 10,
+    backgroundColor: 'rgba(34,197,94,0.15)',
+    borderRadius: 10,
+    position: 'relative',
+  },
+  detailInfoText: {
+    fontSize: 12,
+    color: '#15803d',
+    textAlign: 'center',
+  },
   detailSkeleton: {
     marginTop: 6,
   },
@@ -1664,6 +1772,15 @@ const styles = StyleSheet.create({
   detailButtonPrimary: {
     marginRight: 0,
     backgroundColor: PRIMARY,
+  },
+  detailButtonHalf: {
+    flex: 1,
+    marginRight: 10,
+  },
+  detailButtonHalfRight: {
+    flex: 1,
+    marginRight: 0,
+    marginLeft: 10,
   },
   detailButtonText: {
     fontSize: 14,
@@ -1700,6 +1817,22 @@ const styles = StyleSheet.create({
     marginRight: 8,
     backgroundColor: PRIMARY,
   },
+  remarkConnector: {
+    width: 2,
+    height: 16,
+    marginLeft: 4,
+    marginVertical: 4,
+    backgroundColor: '#16a34a',
+    borderRadius: 2,
+  },
+  remarkDotGreen: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginTop: 5,
+    marginRight: 8,
+    backgroundColor: '#16a34a',
+  },
   remarkLabel: {
     fontSize: 12,
     fontWeight: '700',
@@ -1710,6 +1843,10 @@ const styles = StyleSheet.create({
     color: '#374151',
     marginTop: 2,
     lineHeight: 16,
+  },
+  remarkTextGreen: {
+    color: '#15803d',
+    fontWeight: '700',
   },
 });
 

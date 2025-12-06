@@ -531,7 +531,18 @@ const InspectionModulesScreen = () => {
         ...(interiorData || {}),
         ...(interiorDraft || {}),
       });
-      setEngineDataState(engineData || null);
+      // Merge engine with draft to capture local-only values (images, costs)
+      let engineDraft: any = null;
+      try {
+        engineDraft = loadDraft<any>(formattedSellCarId, 'engine');
+      } catch {
+        engineDraft = null;
+      }
+      setEngineDataState({
+        ...(engineData || {}),
+        ...(engineDraft || {}),
+        ...(engineData?.Reports || {}),
+      });
 
       // Merge test drive with draft to capture local-only values
       let testDriveDraft: any = null;
@@ -1252,7 +1263,24 @@ const InspectionModulesScreen = () => {
     };
 
     // Known, explicit fields
-    pushImg('Engine Image', engineDataState?.engineImage || engineDataState?.EngineImage);
+    pushImg(
+      'Engine Image',
+      engineDataState?.engineImage ||
+        engineDataState?.EngineImage ||
+        engineDataState?.['Engine image'] ||
+        engineDataState?.Reports?.working?.['Engine image'] ||
+        engineDataState?.Reports?.working?.engineImage,
+    );
+    const engineFiles =
+      engineDataState?.files ||
+      engineDataState?.Files ||
+      engineDataState?.images ||
+      engineDataState?.Images ||
+      engineDataState?.photos ||
+      engineDataState?.Photos;
+    if (Array.isArray(engineFiles)) {
+      engineFiles.forEach((uri: any, idx: number) => pushImg(`Engine Image ${idx + 1}`, uri));
+    }
     const odometer = interiorDataState?.odometerImageUri || interiorDataState?.odometerImage;
     pushImg('Interior Odometer Image', odometer);
 
@@ -1474,35 +1502,119 @@ const InspectionModulesScreen = () => {
       'Registration',
     );
 
+    const engineSource =
+      engineDataState?.Reports ||
+      engineDataState?.reports ||
+      engineDataState ||
+      {};
+    const engineWorkingGroup =
+      engineSource?.working ||
+      engineSource?.Working ||
+      engineSource?.['working'] ||
+      engineSource?.['Working'] ||
+      engineSource?.['Working Condition'];
+    const engineNoiseGroup =
+      engineSource?.['noise/leakage'] ||
+      engineSource?.noiseLeakage ||
+      engineSource?.noise ||
+      engineSource?.Noise;
+    const engineVal = (key: string, altKey?: string) =>
+      yesNo(
+        resolveVal(engineWorkingGroup, key) ||
+          (altKey ? resolveVal(engineWorkingGroup, altKey) : '') ||
+          resolveVal(engineSource, key) ||
+          (altKey ? resolveVal(engineSource, altKey) : '') ||
+          resolveVal(engineNoiseGroup, key) ||
+          (altKey ? resolveVal(engineNoiseGroup, altKey) : ''),
+      );
     const engineRows = [
-      { label: 'Engine', value: yesNo(resolveVal(engineDataState, 'Engine') || resolveVal(engineDataState, 'engineWorking')) },
-      { label: 'Radiator', value: yesNo(resolveVal(engineDataState, 'Radiator')) },
-      { label: 'Silencer', value: yesNo(resolveVal(engineDataState, 'Silencer')) },
-      { label: 'Starter Motor', value: yesNo(resolveVal(engineDataState, 'Starter Motor')) },
-      { label: 'Engine Oil Level', value: yesNo(resolveVal(engineDataState, 'Engine Oil Level')) },
-      { label: 'Coolant Availability', value: yesNo(resolveVal(engineDataState, 'Coolant Availability')) },
-      { label: 'Engine Mounting', value: yesNo(resolveVal(engineDataState, 'Engine Mounting')) },
-      { label: 'Battery', value: yesNo(resolveVal(engineDataState, 'Battery')) },
-      { label: 'Engine Oil Leakage', value: yesNo(resolveVal(engineDataState, 'Engine Oil Leakage')) },
-      { label: 'Coolant Oil Leakage', value: yesNo(resolveVal(engineDataState, 'Coolant Oil Leakage')) },
-      { label: 'Abnormal Noise', value: yesNo(resolveVal(engineDataState, 'Abnormal Noise')) },
-      { label: 'Black / White Smoke', value: yesNo(resolveVal(engineDataState, 'Black Smoke') || resolveVal(engineDataState, 'Black Smoke/White Smoke')) },
-      { label: 'Defective Belts', value: yesNo(resolveVal(engineDataState, 'Defective Belts')) },
-      { label: 'Highlights', value: resolveVal(engineDataState, 'Highlight Positives') },
-      { label: 'Other Comments', value: resolveVal(engineDataState, 'Other Comments') },
+      { label: 'Engine', value: engineVal('Engine', 'engineWorking') },
+      { label: 'Radiator', value: engineVal('Radiator') },
+      { label: 'Silencer', value: engineVal('Silencer') },
+      { label: 'Starter Motor', value: engineVal('Starter Motor') },
+      { label: 'Engine Oil Level', value: engineVal('Engine Oil Level') },
+      { label: 'Coolant Availability', value: engineVal('Coolant Availability') },
+      { label: 'Engine Mounting', value: engineVal('Engine Mounting') },
+      { label: 'Battery', value: engineVal('Battery') },
+      { label: 'Engine Oil Leakage', value: engineVal('Engine Oil Leakage') },
+      { label: 'Coolant Oil Leakage', value: engineVal('Coolant Oil Leakage') },
+      { label: 'Abnormal Noise', value: engineVal('Abnormal Noise') },
+      {
+        label: 'Black / White Smoke',
+        value: engineVal('Black Smoke/White Smoke', 'Black Smoke'),
+      },
+      { label: 'Defective Belts', value: engineVal('Defective Belts') },
+      {
+        label: 'Highlights',
+        value:
+          resolveVal(engineNoiseGroup, 'Highlight Positives') ||
+          resolveVal(engineSource, 'Highlight Positives') ||
+          resolveVal(engineDataState, 'Highlight Positives'),
+      },
+      {
+        label: 'Other Comments',
+        value:
+          resolveVal(engineNoiseGroup, 'Other Comments') ||
+          resolveVal(engineSource, 'Other Comments') ||
+          resolveVal(engineDataState, 'Other Comments'),
+      },
+      {
+        label: 'Engine Refurbishment Cost',
+        value:
+          resolveVal(engineWorkingGroup, 'Refurbishment Cost') ||
+          resolveVal(engineSource, 'Refurbishment Cost') ||
+          resolveVal(engineDataState, 'Refurbishment Cost') ||
+          resolveVal(engineDataState, 'engineCost'),
+      },
       {
         label: 'Engine Refurbishment Cost (Total)',
         value:
+          resolveVal(engineSource, 'Refurbishment Cost (Total)') ||
+          resolveVal(engineWorkingGroup, 'Refurbishment Cost (Total)') ||
+          resolveVal(engineWorkingGroup, 'Refurbishment Cost') ||
+          resolveVal(engineSource, 'Engine Refurbishment Cost') ||
           resolveVal(engineDataState, 'Refurbishment Cost (Total)') ||
           resolveVal(engineDataState, 'Engine Refurbishment Cost') ||
-          resolveVal(engineDataState, 'Refurbishment Cost') ||
-          resolveVal(engineDataState, 'engineCost') ||
           resolveVal(engineDataState, 'engineCostTotal'),
       },
     ];
     const engineExtra = buildAdditionalRows(
       engineDataState,
-      new Set(engineRows.map(r => r.label)),
+      new Set([
+        ...engineRows.map(r => r.label),
+        // legacy / draft camelCase keys
+        'engine',
+        'radiator',
+        'silencer',
+        'starterMotor',
+        'engineOilLevel',
+        'coolantAvailability',
+        'engineMounting',
+        'battery',
+        'engineOilLeakage',
+        'coolantOilLeakage',
+        'abnormalNoise',
+        'blackSmoke',
+        'defectiveBelts',
+        'highlightPositives',
+        'otherComments',
+        'refurbCostTotal',
+        'Refurbishment Cost',
+        'Refurbishment Cost (Total)',
+        'Engine image',
+        'Engine Image',
+        'engineWorking',
+        'engineCost',
+        'engineCostTotal',
+        'engineImage',
+        'engine_refurbishment_cost',
+        'engine_refurbishment_cost_total',
+        'working',
+        'Reports',
+        'noise/leakage',
+        'Noise',
+        'noise',
+      ]),
       'Engine',
     );
 

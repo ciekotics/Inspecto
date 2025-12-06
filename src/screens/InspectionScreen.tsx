@@ -58,6 +58,8 @@ export default function InspectionScreen() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+  const [hasExisting, setHasExisting] = useState(false);
+  const [editing, setEditing] = useState(false);
 
   const formattedSellCarId = useMemo(() => {
     if (sellCarId == null) {
@@ -92,7 +94,9 @@ export default function InspectionScreen() {
               : 'Non-Scrap',
           );
           setRegistrationNumber(savedReg);
-          setInfo('Loaded existing inspection details.');
+          setHasExisting(true);
+          setEditing(false);
+          setInfo('Inspection already exists. Proceed or edit details.');
         }
       } catch (err: any) {
         const msg =
@@ -109,6 +113,10 @@ export default function InspectionScreen() {
   }, [formattedSellCarId]);
 
   const handleSubmit = async () => {
+    if (hasExisting && !editing) {
+      navigation.navigate('InspectionModules', {sellCarId: formattedSellCarId});
+      return;
+    }
     if (!formattedSellCarId) {
       setError('Missing sellCarId for inspection');
       return;
@@ -126,6 +134,8 @@ export default function InspectionScreen() {
         evaluationType,
         registrationNumber: registrationNumber.trim(),
       });
+      setHasExisting(true);
+      setEditing(false);
       setInfo('Saved to inspection.');
       navigation.navigate('InspectionModules', {sellCarId: formattedSellCarId});
     } catch (err: any) {
@@ -146,7 +156,7 @@ export default function InspectionScreen() {
           style={styles.backBtn}
           onPress={() => navigation.goBack()}
           android_ripple={{color: 'rgba(0,0,0,0.08)'}}>
-          <ChevronLeft size={18} color="#fff" strokeWidth={2.3} />
+          <ChevronLeft size={18} color="#111827" strokeWidth={2.3} />
         </Pressable>
         <Text style={styles.headerTitle}>Inspection</Text>
         <View style={{width: 32}} />
@@ -176,12 +186,18 @@ export default function InspectionScreen() {
             <EvalOption
               label="Non-Scrap"
               active={evaluationType === 'Non-Scrap'}
-              onPress={() => setEvaluationType('Non-Scrap')}
+              onPress={() => {
+                if (hasExisting && !editing) return;
+                setEvaluationType('Non-Scrap');
+              }}
             />
             <EvalOption
               label="Scrap"
               active={evaluationType === 'Scrap'}
-              onPress={() => setEvaluationType('Scrap')}
+              onPress={() => {
+                if (hasExisting && !editing) return;
+                setEvaluationType('Scrap');
+              }}
             />
           </View>
 
@@ -193,7 +209,11 @@ export default function InspectionScreen() {
             onChangeText={setRegistrationNumber}
             placeholder="Enter registration number"
             autoCapitalize="characters"
-            style={styles.input}
+            editable={!hasExisting || editing}
+            style={[
+              styles.input,
+              hasExisting && !editing ? styles.inputDisabled : null,
+            ]}
             placeholderTextColor="#9ca3af"
           />
 
@@ -202,20 +222,41 @@ export default function InspectionScreen() {
           </View>
 
           <View style={styles.ctaBlock}>
-          <Pressable
-            style={[styles.submitBtn, saving && styles.submitBtnDisabled]}
-            disabled={saving}
-            onPress={handleSubmit}
-            android_ripple={{color: 'rgba(255,255,255,0.15)'}}>
-            {saving ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={styles.submitLabel}>Next</Text>
-            )}
-          </Pressable>
+          {hasExisting && !editing ? (
+            <View style={styles.dualCtaRow}>
+              <Pressable
+                style={[styles.submitBtn, styles.secondaryBtn, styles.dualBtn]}
+                onPress={() => navigation.navigate('InspectionModules', {sellCarId: formattedSellCarId})}
+                android_ripple={{color: 'rgba(255,255,255,0.15)'}}>
+                <Text style={[styles.submitLabel, styles.secondaryBtnText]}>Proceed</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.submitBtn, styles.dualBtn]}
+                onPress={() => setEditing(true)}
+                android_ripple={{color: 'rgba(255,255,255,0.15)'}}>
+                <Text style={styles.submitLabel}>Edit</Text>
+              </Pressable>
+            </View>
+          ) : (
+            <Pressable
+              style={[styles.submitBtn, saving && styles.submitBtnDisabled]}
+              disabled={saving}
+              onPress={handleSubmit}
+              android_ripple={{color: 'rgba(255,255,255,0.15)'}}>
+              {saving ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.submitLabel}>
+                  {hasExisting ? 'Save & Continue' : 'Next'}
+                </Text>
+              )}
+            </Pressable>
+          )}
 
           <Text style={styles.helperText}>
-            We will save this info to the inspection record.
+            {hasExisting && !editing
+              ? 'Inspection already exists. Proceed to view/edit modules or switch to edit to change registration.'
+              : 'We will save this info to the inspection record.'}
           </Text>
           </View>
         </View>
@@ -389,6 +430,10 @@ const styles = StyleSheet.create({
     color: '#111827',
     backgroundColor: '#fff',
   },
+  inputDisabled: {
+    backgroundColor: '#f3f4f6',
+    color: '#6b7280',
+  },
   submitBtn: {
     marginTop: 20,
     backgroundColor: PRIMARY,
@@ -409,9 +454,26 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
   },
+  secondaryBtn: {
+    backgroundColor: '#e5e7eb',
+    marginRight: 10,
+  },
+  secondaryBtnText: {
+    color: '#111827',
+  },
+  dualCtaRow: {
+    marginTop: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  dualBtn: {
+    flex: 1,
+  },
   helperText: {
     marginTop: 8,
-    fontSize: 12,
+    fontSize: 11,
     color: '#6b7280',
     textAlign: 'center',
   },
