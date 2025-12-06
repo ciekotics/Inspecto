@@ -1571,18 +1571,63 @@ const InspectionModulesScreen = () => {
       'Interior',
     );
 
+    const functionsSource =
+      functionsDataState?.Reports ||
+      functionsDataState?.reports ||
+      functionsDataState ||
+      {};
+    const functionsProper =
+      functionsSource?.proper_condition ||
+      functionsSource?.properCondition ||
+      functionsSource?.['proper_condition'] ||
+      {};
+    const functionsNoise =
+      functionsSource?.['noise/leakage'] ||
+      functionsSource?.noiseLeakage ||
+      functionsSource?.noise ||
+      {};
+    const fnYesNo = (key: string, altKey?: string) =>
+      yesNo(
+        resolveVal(functionsProper, key) ||
+          (altKey ? resolveVal(functionsProper, altKey) : '') ||
+          resolveVal(functionsSource, key) ||
+          (altKey ? resolveVal(functionsSource, altKey) : '') ||
+          resolveVal(functionsNoise, key) ||
+          (altKey ? resolveVal(functionsNoise, altKey) : ''),
+      );
     const functionsRows: { label: string; value: any }[] = [
-      { label: 'Steering', value: yesNo(resolveVal(functionsDataState, 'steering') || resolveVal(functionsDataState, 'Steering')) },
-      { label: 'Suspension', value: yesNo(resolveVal(functionsDataState, 'suspension') || resolveVal(functionsDataState, 'Suspension')) },
-      { label: 'Brake', value: yesNo(resolveVal(functionsDataState, 'brake') || resolveVal(functionsDataState, 'Brake')) },
-      { label: 'Gear Shifting', value: yesNo(resolveVal(functionsDataState, 'gearShifting') || resolveVal(functionsDataState, 'Gear Shifting')) },
-      { label: 'Drive Shaft / Axle', value: yesNo(resolveVal(functionsDataState, 'driveShaft') || resolveVal(functionsDataState, 'Drive Shaft/ Axle')) },
-      { label: 'Clutch', value: yesNo(resolveVal(functionsDataState, 'clutch') || resolveVal(functionsDataState, 'Clutch')) },
-      { label: 'Wheel Bearing Noise', value: yesNo(resolveVal(functionsDataState, 'wheelBearingNoise') || resolveVal(functionsDataState, 'Wheel Bearing Noise')) },
-      { label: 'Gear Box Noise', value: yesNo(resolveVal(functionsDataState, 'gearBoxNoise') || resolveVal(functionsDataState, 'Gear Box Noise')) },
-      { label: 'Transmission / Differential Oil Leakage', value: yesNo(resolveVal(functionsDataState, 'transmissionLeakage') || resolveVal(functionsDataState, 'Transmission/ Differential Oil Leakage')) },
-      { label: 'Differential Noise', value: yesNo(resolveVal(functionsDataState, 'differentialNoise') || resolveVal(functionsDataState, 'Differential Noise')) },
-      { label: 'Refurbishment Cost', value: resolveVal(functionsDataState, 'refurbCost') || resolveVal(functionsDataState, 'Refurbishment Cost') },
+      { label: 'Steering', value: fnYesNo('Steering') },
+      { label: 'Suspension', value: fnYesNo('Suspension') },
+      { label: 'Brake', value: fnYesNo('Brake') },
+      { label: 'Gear Shifting', value: fnYesNo('Gear Shifting') },
+      { label: 'Drive Shaft / Axle', value: fnYesNo('Drive Shaft/ Axle', 'Drive Shaft') },
+      { label: 'Clutch', value: fnYesNo('Clutch') },
+      { label: 'Wheel Bearing Noise', value: fnYesNo('Wheel Bearing Noise') },
+      { label: 'Gear Box Noise', value: fnYesNo('Gear Box Noise') },
+      {
+        label: 'Transmission / Differential Oil Leakage',
+        value: fnYesNo('Transmission/ Differential Oil Leakage'),
+      },
+      { label: 'Differential Noise', value: fnYesNo('Differential Noise') },
+      {
+        label: 'Refurbishment Cost',
+        value:
+          resolveVal(functionsSource, 'Refurbishment Cost') ||
+          resolveVal(functionsSource, 'refurbCost') ||
+          resolveVal(functionsDataState, 'Refurbishment Cost'),
+      },
+      {
+        label: 'Highlight Positives',
+        value:
+          resolveVal(functionsSource, 'Highlight Positives') ||
+          resolveVal(functionsDataState, 'Highlight Positives'),
+      },
+      {
+        label: 'Other Comments',
+        value:
+          resolveVal(functionsSource, 'Other Comments') ||
+          resolveVal(functionsDataState, 'Other Comments'),
+      },
     ];
     const functionsExtra = buildAdditionalRows(
       functionsDataState,
