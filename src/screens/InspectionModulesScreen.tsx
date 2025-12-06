@@ -1369,6 +1369,44 @@ const InspectionModulesScreen = () => {
     `;
   };
 
+  const buildDefectsSection = (
+    defects: any[],
+    images: { label: string; uri: string }[],
+  ) => {
+    if (!defects || defects.length === 0) return '';
+    const cards = defects
+      .map((d, idx) => {
+        const remark =
+          d?.Remark ||
+          d?.remark ||
+          d?.['Defect remark'] ||
+          d?.defectRemark ||
+          d?.['Defect image'] ||
+          d?.imageRemark ||
+          '';
+        const label = `Defect ${idx + 1}`;
+        const img = images.find(i => i.label === label);
+        if (!img && !remark) return '';
+        return `
+          <div class="defect-card">
+            ${img ? `<img src="${escapeHtml(img.uri)}" />` : ''}
+            <div class="defect-caption">${escapeHtml(remark || label)}</div>
+          </div>
+        `;
+      })
+      .filter(Boolean)
+      .join('');
+    if (!cards) return '';
+    return `
+      <div class="section">
+        <div class="section-title">Defects</div>
+        <div class="defect-grid">
+          ${cards}
+        </div>
+      </div>
+    `;
+  };
+
   const buildEvaluationHtml = (imagesOverride?: {label: string; uri: string}[]) => {
     const inspectorName =
       inspectionSnapshot?.inspectedBy?.name ||
@@ -1663,12 +1701,12 @@ const InspectionModulesScreen = () => {
       });
     }
 
-    const defects = (defectsDataState || []).map((d: any, idx: number) => {
-      const remark = d?.Remark || d?.remark || d?.['Defect image'] || '';
-      return remark ? `${idx + 1}. ${remark}` : '';
-    });
-
     const images = imagesOverride || extractImages();
+    const frameImages = images.filter(img => /^frame/i.test(img.label || ''));
+    const exteriorImages = images.filter(img => img.label.startsWith('Exterior'));
+    const interiorImages = images.filter(img => img.label.startsWith('Interior'));
+    const engineImages = images.filter(img => /^engine/i.test(img.label || ''));
+    const documentImages = images.filter(img => img.label.startsWith('Document'));
 
     const sections = [
       `
@@ -1680,32 +1718,21 @@ const InspectionModulesScreen = () => {
         </div>
       `,
       buildSection('Vehicle Details', [...vehicleRows, ...vehicleExtra]),
-      buildSection('Registration Details', [...regRows, ...regExtra]),
+      buildSection('Registration Details', [...regRows, ...regExtra]) +
+        buildImageGrid('Document Images', documentImages),
       buildSection('Exterior', [...exteriorRows, ...exteriorExtra]) +
-        buildImageGrid(
-          'Exterior Images',
-          images.filter(img => img.label.startsWith('Exterior')),
-        ),
+        buildImageGrid('Exterior Images', exteriorImages),
       buildSection('Electrical + Interior', [...interiorRows, ...interiorExtra]) +
-        buildImageGrid(
-          'Electrical + Interior Images',
-          images.filter(img => img.label.startsWith('Interior')),
-        ),
-      buildSection('Engine Inspection', [...engineRows, ...engineExtra]),
+        buildImageGrid('Electrical + Interior Images', interiorImages),
+      buildSection('Engine Inspection', [...engineRows, ...engineExtra]) +
+        buildImageGrid('Engine Images', engineImages),
       buildSection('Test Drive', tdRows),
       buildSection('Functions', [...functionsRows, ...functionsExtra]),
-      buildSection('Frames', [...frameRows, ...frameExtra]),
+      buildSection('Frames', [...frameRows, ...frameExtra]) +
+        buildImageGrid('Frame Images', frameImages),
       buildSection('Rating & Remarks', ratingRows),
       buildSection('Refurbishment', refurbRows),
-      buildListSection('Defects', defects),
-      buildImageGrid(
-        'Inspection Images',
-        images.filter(
-          img =>
-            !img.label.startsWith('Exterior') &&
-            !img.label.startsWith('Interior'),
-        ),
-      ),
+      buildDefectsSection(defectsDataState || [], images),
     ]
       .filter(Boolean)
       .join('');
@@ -1733,6 +1760,10 @@ const InspectionModulesScreen = () => {
             .img-card { border: 1px solid #e5e7eb; border-radius: 10px; overflow: hidden; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,0.04); }
             .img-card img { width: 100%; height: 180px; object-fit: cover; display: block; }
             .img-label { padding: 8px; text-align: center; font-size: 12px; font-weight: 600; color: #374151; }
+            .defect-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; padding: 12px; }
+            .defect-card { border: 1px solid #e5e7eb; border-radius: 10px; overflow: hidden; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,0.04); display: flex; flex-direction: column; }
+            .defect-card img { width: 100%; height: 220px; object-fit: cover; display: block; }
+            .defect-caption { padding: 10px; text-align: center; font-size: 12px; font-weight: 600; color: #374151; }
           </style>
         </head>
         <body>
