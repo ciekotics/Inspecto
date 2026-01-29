@@ -18,6 +18,7 @@ import {
   State,
   TapGestureHandler,
 } from 'react-native-gesture-handler';
+import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {useNavigation, useRoute} from '@react-navigation/native';
 import {
   ChevronLeft,
@@ -293,6 +294,7 @@ const sanitizeEngineInfo = (info: any) => {
 const VehicleDetailsScreen = () => {
   const navigation = useNavigation<any>();
   const route = useRoute();
+  const insets = useSafeAreaInsets();
   const {sellCarId} = (route.params as RouteParams) || {};
   const online = useAppSelector(state => state.network.isOnline === true);
   const [inspectionId, setInspectionId] = useState<string | number>('');
@@ -1132,7 +1134,7 @@ const VehicleDetailsScreen = () => {
 
   return (
     <SafeAreaView style={styles.root}>
-      <View style={styles.header}>
+      <View style={[styles.header, {paddingTop: insets.top + 10, paddingBottom: 10}]}>
         <Pressable
           style={styles.backBtn}
           onPress={() => navigation.goBack()}

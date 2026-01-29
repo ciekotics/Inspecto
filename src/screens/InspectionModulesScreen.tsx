@@ -7,7 +7,6 @@ import {
   Pressable,
   ScrollView,
   ActivityIndicator,
-  RefreshControl,
   TextInput,
   Alert,
   Share,
@@ -15,6 +14,7 @@ import {
   PermissionsAndroid,
   Linking,
 } from 'react-native';
+import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import {
   ChevronLeft,
@@ -30,10 +30,11 @@ import {
   Star,
   Check,
   FileText,
+  RefreshCcw,
 } from 'lucide-react-native';
 import { PRIMARY } from '../utils/theme';
 import { client } from '../utils/apiClient';
-import { loadDraft } from '../utils/draftStorage';
+import { clearDraft, loadDraft, type DraftModule } from '../utils/draftStorage';
 import { store } from '../store/store';
 import RNFS from 'react-native-fs';
 import RNHTMLtoPDF from 'react-native-html-to-pdf';
@@ -87,6 +88,7 @@ type ModuleProgress = {
 const InspectionModulesScreen = () => {
   const navigation = useNavigation<any>();
   const route = useRoute();
+  const insets = useSafeAreaInsets();
   const { sellCarId } = (route.params as RouteParams) || {};
   const formattedSellCarId =
     sellCarId == null ? '' : String(sellCarId).trim();
@@ -129,6 +131,15 @@ const InspectionModulesScreen = () => {
     if (!formattedSellCarId) {
       return;
     }
+    const useDrafts = !opts?.isRefresh;
+    const loadDraftSafe = (key: DraftModule) => {
+      if (!useDrafts) return null;
+      try {
+        return loadDraft<any>(formattedSellCarId, key);
+      } catch {
+        return null;
+      }
+    };
     if (opts?.isRefresh) {
       setRefreshing(true);
     } else {
@@ -209,15 +220,6 @@ const InspectionModulesScreen = () => {
         errors: apiErrors,
       });
 
-      let ratingResOk: any = null;
-      try {
-        ratingResOk = await client.get('/api/view-evaluator-rating', {
-          params: { sellCarId: formattedSellCarId },
-        });
-      } catch (err: any) {
-        console.warn('Failed to fetch evaluator rating', err?.message || err);
-      }
-
       const nextProgress: Record<string, ModuleProgress> = {};
 
       // Vehicle details progress (aggregate of step 1a/1b/1c)
@@ -257,6 +259,16 @@ const InspectionModulesScreen = () => {
           return v.trim() !== '';
         }
         return true;
+      };
+      const hasAnyContent = (v: any): boolean => {
+        if (v == null) return false;
+        if (typeof v === 'string') return v.trim() !== '';
+        if (typeof v === 'number' || typeof v === 'boolean') return true;
+        if (Array.isArray(v)) return v.some(item => hasAnyContent(item));
+        if (typeof v === 'object') {
+          return Object.values(v).some(val => hasAnyContent(val));
+        }
+        return false;
       };
 
       const requiredEngine = [
@@ -498,76 +510,182 @@ const InspectionModulesScreen = () => {
         apply(override);
         return Object.keys(result).length > 0 ? result : null;
       };
-      let exteriorDraft: any = null;
-      try {
-        exteriorDraft = loadDraft<any>(formattedSellCarId, 'exterior');
-      } catch {
-        exteriorDraft = null;
-      }
-      const mergedExterior = {
-        ...(exteriorData || {}),
-        ...(exteriorDraft || {}),
-      };
+      const exteriorDraft = loadDraftSafe('exterior');
+      const mergedExterior = useDrafts
+        ? {
+            ...(exteriorData || {}),
+            ...(exteriorDraft || {}),
+          }
+        : exteriorData;
       const mergedPanels = mergePanels(
         exteriorData?.panels || exteriorData?.panelStates,
         exteriorDraft?.panels || exteriorDraft?.panelStates,
       );
-      if (mergedPanels) {
+      if (mergedPanels && mergedExterior) {
         mergedExterior.panels = mergedPanels;
       }
-      setExteriorDataState(
+      const finalExterior =
         mergedExterior && Object.keys(mergedExterior).length > 0
           ? mergedExterior
-          : null,
-      );
+          : null;
+      setExteriorDataState(finalExterior);
       // Merge interior with draft to capture local-only values
-      let interiorDraft: any = null;
-      try {
-        interiorDraft = loadDraft<any>(formattedSellCarId, 'electrical');
-      } catch {
-        interiorDraft = null;
-      }
-      setInteriorDataState({
-        ...(interiorData || {}),
-        ...(interiorDraft || {}),
-      });
+      const interiorDraft = loadDraftSafe('electrical');
+      const mergedInterior = useDrafts
+        ? {
+            ...(interiorData || {}),
+            ...(interiorDraft || {}),
+          }
+        : interiorData || null;
+      const finalInterior =
+        mergedInterior && Object.keys(mergedInterior).length > 0
+          ? mergedInterior
+          : null;
+      setInteriorDataState(finalInterior);
       // Merge engine with draft to capture local-only values (images, costs)
-      let engineDraft: any = null;
-      try {
-        engineDraft = loadDraft<any>(formattedSellCarId, 'engine');
-      } catch {
-        engineDraft = null;
-      }
-      setEngineDataState({
-        ...(engineData || {}),
-        ...(engineDraft || {}),
-        ...(engineData?.Reports || {}),
-      });
+      const engineDraft = loadDraftSafe('engine');
+      const mergedEngine = useDrafts
+        ? {
+            ...(engineData || {}),
+            ...(engineDraft || {}),
+            ...(engineData?.Reports || {}),
+          }
+        : engineData || null;
+      const finalEngine =
+        mergedEngine && Object.keys(mergedEngine).length > 0
+          ? mergedEngine
+          : null;
+      setEngineDataState(finalEngine);
 
       // Merge test drive with draft to capture local-only values
-      let testDriveDraft: any = null;
-      try {
-        testDriveDraft = loadDraft<any>(formattedSellCarId, 'testDrive');
-      } catch {
-        testDriveDraft = null;
-      }
-      setTestDriveDataState({
-        ...(testDriveData || {}),
-        ...(testDriveDraft || {}),
-      });
+      const testDriveDraft = loadDraftSafe('testDrive');
+      const mergedTestDrive = useDrafts
+        ? {
+            ...(testDriveData || {}),
+            ...(testDriveDraft || {}),
+          }
+        : testDriveData || null;
+      const finalTestDrive =
+        mergedTestDrive && Object.keys(mergedTestDrive).length > 0
+          ? mergedTestDrive
+          : null;
+      setTestDriveDataState(finalTestDrive);
       setFunctionsDataState(functionsData || null);
       setFramesDataState(framesData || null);
       setDefectsDataState(Array.isArray(defectsData) ? defectsData : []);
       setRefurbDataState(refurbData || null);
+
+      const computeExteriorPct = (src: any) => {
+        if (!src || typeof src !== 'object') return null;
+        const PANEL_KEYS = [
+          'Bonnet & Front Windshield',
+          'Front Bumper',
+          'Left Front Edge',
+          'Roof Front',
+          'Left Front',
+          'Left Rear',
+          'Left Rear Edge',
+          'Rear Bumper',
+          'Tailgate & Rear Windshield',
+          'Right Rear Edge',
+          'Roof Rear',
+          'Right Rear',
+          'Right Front',
+          'Right Front Edge',
+        ];
+        const TYRE_POSITIONS = [
+          'Front Right',
+          'Front Left',
+          'Rear Right',
+          'Rear Left',
+          'Spare',
+        ];
+
+        const panels =
+          src.panels ||
+          src.Panels ||
+          src.panelStates ||
+          src.panelstates ||
+          {};
+        const panelStateFor = (key: string) => {
+          if (Array.isArray(panels)) {
+            return panels.find((p: any) => p?.name === key || p?.panel === key) || panels[0];
+          }
+          return panels[key];
+        };
+        const hasPanelData =
+          (Array.isArray(panels) && panels.length > 0) ||
+          (!!panels && typeof panels === 'object' && Object.keys(panels).length > 0);
+        let panelRequired = 0;
+        let panelFilled = 0;
+        if (hasPanelData) {
+          PANEL_KEYS.forEach(k => {
+            panelRequired += 1;
+            const st = panelStateFor(k) || {};
+            const photo =
+              st.photoUri ||
+              st.photo ||
+              st.image ||
+              st.img ||
+              st.uri ||
+              st.url;
+            const status = st.status || st.scratch || st.scratchStatus;
+            if (photo && status) {
+              panelFilled += 1;
+            }
+          });
+        }
+
+        const tyreValues =
+          src['Tyre Thread Count'] ||
+          src.tyreValues ||
+          src.tyres ||
+          src.Tyres ||
+          {};
+        let tyreRequired = TYRE_POSITIONS.length;
+        let tyreFilled = 0;
+        TYRE_POSITIONS.forEach(pos => {
+          const v = tyreValues[pos] || tyreValues[pos.replace(/\s/g, '')];
+          if (v) tyreFilled += 1;
+        });
+
+        let fieldRequired = 4; // wheel type, tyre cost, exterior cost, repaint
+        let fieldFilled = 0;
+        if (src['Wheel Type'] || src.wheelType) fieldFilled += 1;
+        if (src['Refurbishment Cost (Tyre)'] || src.tyreRefurbCost) fieldFilled += 1;
+        if (src['Exterior Refurbishment Cost'] || src.exteriorRefurbCost) fieldFilled += 1;
+        if (src['Repaint Done'] || src.repaintDone) fieldFilled += 1;
+
+        const totalRequired = panelRequired + tyreRequired + fieldRequired;
+        const totalFilled = panelFilled + tyreFilled + fieldFilled;
+        return {
+          pct:
+            totalRequired > 0
+              ? Math.min(100, Math.round((totalFilled / totalRequired) * 100))
+              : 0,
+          requiredLeft: Math.max(0, totalRequired - totalFilled),
+          optionalLeft: 0,
+          hasExplicitCounts: true,
+        };
+      };
+
+      const exteriorPct = computeExteriorPct(finalExterior);
+      if (exteriorPct) {
+        nextProgress.exterior = exteriorPct;
+      }
+
       const hasDataFlags: Record<string, boolean> = {
-        vehicleDetails: !!(engineInfo || rcDetails || regDetails),
-        exterior: !!exteriorData,
-        interior: !!interiorData,
-        testDrive: !!testDriveData,
-        engine: !!engineData,
-        functions: !!functionsData,
-        frames: !!framesData,
-        refurbishmentCost: !!refurbData,
+        vehicleDetails:
+          hasAnyContent(engineInfo) ||
+          hasAnyContent(rcDetails) ||
+          hasAnyContent(regDetails),
+        exterior: hasAnyContent(finalExterior),
+        interior: hasAnyContent(finalInterior),
+        testDrive: hasAnyContent(finalTestDrive),
+        engine: hasAnyContent(finalEngine),
+        functions: hasAnyContent(functionsData),
+        frames: hasAnyContent(framesData),
+        refurbishmentCost: hasAnyContent(refurbData),
         defective: Array.isArray(defectsData) ? defectsData.length > 0 : false,
       };
       const moduleKeyMap: { api: string; ui: string }[] = [
@@ -584,15 +702,23 @@ const InspectionModulesScreen = () => {
         const isDone = !!completed[api] || !!hasDataFlags[api];
         const existing = nextProgress[ui];
         if (existing) {
-          // Preserve detailed counts if we already computed them; just upgrade to 100 if backend marks completed
-          nextProgress[ui] = isDone
-            ? {
-              ...existing,
-              pct: 100,
-              requiredLeft: existing.requiredLeft >= 0 ? 0 : existing.requiredLeft,
-              optionalLeft: existing.optionalLeft,
+          if (existing.hasExplicitCounts) {
+            // Trust explicit counts; only mark 100% if counts show no required fields left
+            if (existing.requiredLeft <= 0 && (existing.optionalLeft <= 0 || existing.optionalLeft === -1)) {
+              nextProgress[ui] = {...existing, pct: 100, requiredLeft: Math.max(existing.requiredLeft, 0)};
+            } else {
+              nextProgress[ui] = existing;
             }
-            : existing;
+          } else {
+            nextProgress[ui] = isDone
+              ? {
+                  ...existing,
+                  pct: 100,
+                  requiredLeft: existing.requiredLeft >= 0 ? 0 : existing.requiredLeft,
+                  optionalLeft: existing.optionalLeft,
+                }
+              : existing;
+          }
         } else {
           nextProgress[ui] = {
             pct: isDone ? 100 : 0,
@@ -613,10 +739,40 @@ const InspectionModulesScreen = () => {
         };
       }
 
+      const requiredCompletedKeys = [
+        'vehicleDetails',
+        'engine',
+        'exterior',
+        'interior',
+        'functions',
+        'frames',
+        'testDrive',
+        'refurbishmentCost',
+        'defective',
+      ];
+      const missingModules = requiredCompletedKeys.filter(
+        key => completed[key] !== true && !hasDataFlags[key],
+      );
+      let ratingResOk: any = null;
+      if (missingModules.length === 0) {
+        try {
+          ratingResOk = await client.get('/api/view-evaluator-rating', {
+            params: { sellCarId: formattedSellCarId },
+          });
+        } catch (err: any) {
+          console.warn('Failed to fetch evaluator rating', err?.message || err);
+        }
+      } else {
+        console.log('[InspectionModules] Skipping evaluator rating fetch (modules incomplete)', {
+          sellCarId: formattedSellCarId,
+          missingModules,
+        });
+      }
+
       // Local draft-based progress overrides (best-effort)
       let evalRating: any = null;
       try {
-        const functionsDraft = loadDraft<any>(formattedSellCarId, 'functions');
+        const functionsDraft = loadDraftSafe('functions');
         const computeFunctionsPct = (src: any) => {
           const source = src?.Reports || src?.reports || src;
           const required = 11;
@@ -664,7 +820,7 @@ const InspectionModulesScreen = () => {
           nextProgress.functions = computeFunctionsPct(functionsData);
         }
 
-        const engineDraft = loadDraft<any>(formattedSellCarId, 'engine');
+        const engineDraft = loadDraftSafe('engine');
         if (engineDraft) {
           const required = 15;
           const toggles = [
@@ -693,7 +849,7 @@ const InspectionModulesScreen = () => {
           };
         }
 
-        const tdDraft = loadDraft<any>(formattedSellCarId, 'testDrive');
+        const tdDraft = loadDraftSafe('testDrive');
         if (tdDraft) {
           const isComplete =
             tdDraft.isComplete ||
@@ -723,10 +879,7 @@ const InspectionModulesScreen = () => {
           };
         }
 
-        const electricalDraft = loadDraft<any>(
-          formattedSellCarId,
-          'electrical',
-        );
+        const electricalDraft = loadDraftSafe('electrical');
         if (electricalDraft) {
           const required = 30;
           let filled = 0;
@@ -779,7 +932,7 @@ const InspectionModulesScreen = () => {
           };
         }
 
-        const framesDraft = loadDraft<any>(formattedSellCarId, 'frames');
+        const framesDraft = loadDraftSafe('frames');
         const computeFramesPct = (src: any) => {
           if (!src || typeof src !== 'object') return null;
           const anyDamage = src['Any Damage In'] || src.anyDamageIn || src.anyDamage;
@@ -829,7 +982,7 @@ const InspectionModulesScreen = () => {
           nextProgress.frames = framesPct;
         }
 
-        const refurbDraft = loadDraft<any>(formattedSellCarId, 'refurbishment');
+        const refurbDraft = loadDraftSafe('refurbishment');
         const computeRefurb = (src: any) => {
           if (!src || typeof src !== 'object') return null;
           const other = src['Other Refurbishment Cost'] || src.other || {};
@@ -923,17 +1076,6 @@ const InspectionModulesScreen = () => {
         console.warn('Failed to use draft progress', err);
       }
 
-      const requiredCompletedKeys = [
-        'vehicleDetails',
-        'engine',
-        'exterior',
-        'interior',
-        'functions',
-        'frames',
-        'testDrive',
-        'refurbishmentCost',
-        'defective',
-      ];
       const doneFromFlags = requiredCompletedKeys.every(
         key => completed[key] === true || hasDataFlags[key],
       );
@@ -980,6 +1122,28 @@ const InspectionModulesScreen = () => {
   useEffect(() => {
     fetchProgress();
   }, [formattedSellCarId]);
+
+  const clearAllDrafts = () => {
+    if (!formattedSellCarId) return;
+    const draftModules: DraftModule[] = [
+      'vehicleDetails',
+      'engine',
+      'exterior',
+      'electrical',
+      'testDrive',
+      'functions',
+      'frames',
+      'refurbishment',
+      'defective',
+    ];
+    draftModules.forEach(module => clearDraft(formattedSellCarId, module));
+  };
+
+  const handleRefresh = async () => {
+    if (!formattedSellCarId) return;
+    clearAllDrafts();
+    await fetchProgress({ isRefresh: true });
+  };
 
   const handleSaveRating = async () => {
     if (ratingSubmitting) return;
@@ -2183,7 +2347,7 @@ const InspectionModulesScreen = () => {
 
   return (
     <SafeAreaView style={styles.root}>
-      <View style={styles.header}>
+      <View style={[styles.header, {paddingTop: insets.top + 4}]}>
         <Pressable
           style={styles.backBtn}
           onPress={() => navigation.goBack()}
@@ -2191,18 +2355,22 @@ const InspectionModulesScreen = () => {
           <ChevronLeft size={18} color="#111827" strokeWidth={2.3} />
         </Pressable>
         <Text style={styles.headerTitle}>Inspection</Text>
-        <View style={{ width: 32 }} />
+        <Pressable
+          style={[
+            styles.refreshBtn,
+            (loading || refreshing) && styles.refreshBtnDisabled,
+          ]}
+          onPress={handleRefresh}
+          disabled={loading || refreshing}>
+          {refreshing ? (
+            <ActivityIndicator size="small" color="#111827" />
+          ) : (
+            <RefreshCcw size={16} color="#111827" strokeWidth={2.3} />
+          )}
+        </Pressable>
       </View>
 
       <ScrollView
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={() => fetchProgress({ isRefresh: true })}
-            colors={[PRIMARY]}
-            tintColor={PRIMARY}
-          />
-        }
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}>
         <View style={styles.card}>
@@ -2418,14 +2586,15 @@ const InspectionModulesScreen = () => {
               const isDefective = item.key === 'defective';
               const defectCount =
                 isDefective && optionalLeft >= 0 ? optionalLeft : 0;
+              const requiredComplete = hasExplicitCounts
+                ? requiredLeft === 0
+                : pct >= 100;
+              const optionalPending =
+                hasExplicitCounts && optionalLeft > 0 && !isRefurbishment && !isDefective;
               const completedAllFields =
                 (isRefurbishment && refurbOptionalLeft === 0) ||
                 (isDefective && defectCount > 0) ||
-                (pct >= 100 &&
-                  ((hasExplicitCounts &&
-                    requiredLeft === 0 &&
-                    optionalLeft === 0) ||
-                    (!hasExplicitCounts && pct >= 100)));
+                (requiredComplete && !optionalPending);
               const hintLabel = (() => {
                 if (isRefurbishment) {
                   if (refurbOptionalLeft === 0) return 'Completed';
@@ -2433,6 +2602,10 @@ const InspectionModulesScreen = () => {
                 }
                 if (isDefective) {
                   return `${defectCount} defective piece${defectCount === 1 ? '' : 's'}`;
+                }
+                if (requiredComplete && optionalPending) {
+                  const optLeft = Math.max(0, optionalLeft);
+                  return `${optLeft} optional field${optLeft === 1 ? '' : 's'} left`;
                 }
                 if (completedAllFields) {
                   return 'Completed';
@@ -2537,6 +2710,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#f3f4f6',
+  },
+  refreshBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#f3f4f6',
+  },
+  refreshBtnDisabled: {
+    opacity: 0.6,
   },
   headerTitle: {
     flex: 1,

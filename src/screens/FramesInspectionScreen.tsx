@@ -18,6 +18,7 @@ import {
   launchCamera,
   ImagePickerResponse,
 } from 'react-native-image-picker';
+import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {
   PinchGestureHandler,
   TapGestureHandler,
@@ -37,6 +38,7 @@ type YesNo = 'Yes' | 'No' | '';
 const FramesInspectionScreen = () => {
   const navigation = useNavigation<any>();
   const route = useRoute();
+  const insets = useSafeAreaInsets();
   const {sellCarId} = (route.params as RouteParams) || {};
   const formattedSellCarId =
     sellCarId == null ? '' : String(sellCarId).trim();
@@ -651,7 +653,7 @@ const FramesInspectionScreen = () => {
 
   return (
     <SafeAreaView style={styles.root}>
-      <View style={styles.header}>
+      <View style={[styles.header, {paddingTop: insets.top + 10, paddingBottom: 10}]}>
         <Pressable
           style={styles.backBtn}
           onPress={() => navigation.goBack()}

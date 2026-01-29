@@ -1,0 +1,55 @@
+diff --git a/node_modules/react-native-date-picker/android/src/main/res/values/styles.xml b/node_modules/react-native-date-picker/android/src/main/res/values/styles.xml
+new file mode 100644
+index 0000000..cebb514
+--- /dev/null
++++ b/node_modules/react-native-date-picker/android/src/main/res/values/styles.xml
+@@ -0,0 +1,20 @@
++<?xml version="1.0" encoding="utf-8"?>
++<resources xmlns:tools="http://schemas.android.com/tools">
++    <style name="DatePickerBaseTheme">
++        <item name="android:textSize" tools:ignore="SpUsage">17sp</item>
++    </style>
++    <style name="DatePickerTheme" parent="DatePickerBaseTheme">
++        <!-- Empty to allow overriding theme in consuming apps  -->
++    </style>
++    <style name="android_native">
++        <item name="android:layout_marginLeft">5dp</item>
++        <item name="android:layout_marginRight">5dp</item>
++        <item name="android:layout_width">wrap_content</item>
++        <item name="android:layout_height">match_parent</item>
++        <item name="android:descendantFocusability">blocksDescendants</item>
++
++    </style>
++    <style name="android_native_small" parent="android_native">
++        <item name="android:layout_width">40dp</item>
++    </style>
++</resources>
+diff --git a/node_modules/react-native-date-picker/android/src/main/res/layout/number_picker_material.xml b/node_modules/react-native-date-picker/android/src/main/res/layout/number_picker_material.xml
+new file mode 100644
+index 0000000..6d914ef
+--- /dev/null
++++ b/node_modules/react-native-date-picker/android/src/main/res/layout/number_picker_material.xml
+@@ -0,0 +1,11 @@
++<?xml version="1.0" encoding="utf-8"?>
++
++
++<view xmlns:android="http://schemas.android.com/apk/res/android" class="android.widget.NumberPicker$CustomEditText"
++    android:id="@+id/numberpicker_input"
++    android:layout_width="fill_parent"
++    android:layout_height="wrap_content"
++    android:gravity="center"
++    android:singleLine="true"
++    android:background="@null"
++    android:textAppearance="@*android:style/TextAppearance.Material.NumberPicker" />
+diff --git a/node_modules/react-native-date-picker/android/src/main/res/drawable/number_picker_divider_material.xml b/node_modules/react-native-date-picker/android/src/main/res/drawable/number_picker_divider_material.xml
+new file mode 100644
+index 0000000..d5b9f97
+--- /dev/null
++++ b/node_modules/react-native-date-picker/android/src/main/res/drawable/number_picker_divider_material.xml
+@@ -0,0 +1,6 @@
++<?xml version="1.0" encoding="utf-8"?>
++<shape xmlns:android="http://schemas.android.com/apk/res/android"
++       android:tint="?attr/colorControlNormal"
++       android:shape="rectangle">
++    <solid android:color="@android:color/black" />
++</shape>

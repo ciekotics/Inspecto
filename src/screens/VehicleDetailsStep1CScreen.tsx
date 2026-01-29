@@ -13,6 +13,7 @@ import {
   Alert,
 } from 'react-native';
 import {useNavigation, useRoute} from '@react-navigation/native';
+import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {ChevronLeft, Camera, Check} from 'lucide-react-native';
 import {
   launchCamera,
@@ -61,6 +62,7 @@ const INITIAL_FORM: RegistrationForm = {
 const VehicleDetailsStep1CScreen = () => {
   const navigation = useNavigation<any>();
   const route = useRoute();
+  const insets = useSafeAreaInsets();
   const {sellCarId} = (route.params as RouteParams) || {};
   const formattedSellCarId = sellCarId == null ? '' : String(sellCarId).trim();
 
@@ -258,7 +260,7 @@ const VehicleDetailsStep1CScreen = () => {
 
   return (
     <SafeAreaView style={styles.root}>
-      <View style={styles.header}>
+      <View style={[styles.header, {paddingTop: insets.top + 10, paddingBottom: 10}]}>
         <Pressable
           style={styles.backBtn}
           onPress={() => navigation.goBack()}
@@ -971,3 +973,6 @@ const styles = StyleSheet.create({
 });
 
 export default VehicleDetailsStep1CScreen;
+
+
+

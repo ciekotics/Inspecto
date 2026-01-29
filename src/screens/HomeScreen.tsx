@@ -171,6 +171,7 @@ export default function HomeScreen() {
   const [ownedVehicles, setOwnedVehicles] = useState<OwnedVehicle[]>([]);
   const [loading, setLoading] = useState(false);
   const [ownedLoading, setOwnedLoading] = useState(false);
+  const [ownedLoadingMore, setOwnedLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [ownedError, setOwnedError] = useState<string | null>(null);
   const [brands, setBrands] = useState<Brand[]>([]);
@@ -183,6 +184,10 @@ export default function HomeScreen() {
     brandId: number | null;
     modelId: number | null;
   }>({brandId: null, modelId: null});
+  const [ownedOffset, setOwnedOffset] = useState(0);
+  const [ownedTotal, setOwnedTotal] = useState<number | null>(null);
+  const PAGE_SIZE = 20;
+  const [ownedHasMore, setOwnedHasMore] = useState(true);
   const [detailVisible, setDetailVisible] = useState(false);
   const [detailBooking, setDetailBooking] = useState<Booking | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -241,7 +246,15 @@ export default function HomeScreen() {
       setError(null);
 
       try {
-        const isSuperAdmin = !!auth.user?.isSuperAdmin;
+        const roleNameRaw =
+          auth.user?.role?.role || auth.user?.roleName || auth.user?.role;
+        const roleName =
+          typeof roleNameRaw === 'string' ? roleNameRaw.trim() : '';
+        const isPrivileged =
+          !!auth.user?.isSuperAdmin ||
+          !!auth.user?.isAdmin ||
+          !!auth.user?.isSubAdmin ||
+          roleName.toUpperCase() === 'INSPECTION ENGINEER';
         const fullNameParts = [
           auth.user?.firstName,
           auth.user?.middleName,
@@ -258,7 +271,7 @@ export default function HomeScreen() {
         let slots: any[] = [];
         let effectiveInspectorName: string | null = fullName || null;
 
-        if (isSuperAdmin) {
+        if (isPrivileged) {
           const res = await client.get('/api/view-inspection-slots', {
             params: baseParams,
           });
@@ -357,7 +370,7 @@ export default function HomeScreen() {
           return true;
         });
 
-        if (!isSuperAdmin) {
+        if (!isPrivileged) {
           visibleSlots = visibleSlots.filter(slot => {
             const inspectorRaw = String(slot?.inspector || '').trim();
             const inspectorNorm = normalizeName(inspectorRaw || '');
@@ -545,13 +558,14 @@ export default function HomeScreen() {
         return;
       }
 
-      setOwnedLoading(true);
-      setOwnedError(null);
+    setOwnedLoading(true);
+    setOwnedLoadingMore(false);
+    setOwnedError(null);
 
       try {
         const params: any = {
-          limit: 20,
-          offset: 0,
+          limit: PAGE_SIZE,
+          offset: ownedOffset,
           status: true,
         };
 
@@ -567,6 +581,7 @@ export default function HomeScreen() {
         });
 
         const vehicles: any[] = res.data?.data?.vehicles ?? [];
+        const totalCount: number | undefined = res.data?.data?.count;
         const mapped: OwnedVehicle[] = vehicles.map(v => {
           const {label, day} = formatIsoDateLabel(
             typeof v.createdDate === 'string' ? v.createdDate : undefined,
@@ -606,7 +621,17 @@ export default function HomeScreen() {
         });
 
         if (!cancelled) {
-          setOwnedVehicles(mapped);
+          setOwnedVehicles(prev =>
+            ownedOffset === 0 ? mapped : [...prev, ...mapped],
+          );
+          if (typeof totalCount === 'number') {
+            setOwnedTotal(totalCount);
+            setOwnedHasMore(prevCount =>
+              ownedOffset + vehicles.length < totalCount,
+            );
+          } else {
+            setOwnedHasMore(vehicles.length === PAGE_SIZE);
+          }
         }
       } catch (err: any) {
         console.error('[HomeScreen] Failed to load owned vehicles', {
@@ -625,6 +650,7 @@ export default function HomeScreen() {
       } finally {
         if (!cancelled) {
           setOwnedLoading(false);
+          setOwnedLoadingMore(false);
         }
       }
     };
@@ -634,7 +660,25 @@ export default function HomeScreen() {
     return () => {
       cancelled = true;
     };
-  }, [activeTab, auth.token, auth.user]);
+  }, [activeTab, auth.token, auth.user, ownedOffset, filters.brandId, filters.modelId]);
+
+  // Reset pagination when filters change
+  useEffect(() => {
+    setOwnedOffset(0);
+    setOwnedHasMore(true);
+    setOwnedTotal(null);
+    setOwnedVehicles([]);
+  }, [filters.brandId, filters.modelId]);
+
+  // Reset owned list when re-entering the tab to avoid duplicate appends
+  useEffect(() => {
+    if (activeTab === 'owned') {
+      setOwnedOffset(0);
+      setOwnedHasMore(true);
+      setOwnedTotal(null);
+      setOwnedVehicles([]);
+    }
+  }, [activeTab]);
 
   useEffect(() => {
     TABS.forEach(tab => {
@@ -657,6 +701,18 @@ export default function HomeScreen() {
       setDetailData(null);
       setDetailError(null);
     });
+  };
+
+  // Infinite scroll loader for owned vehicles (trigger at 75% scroll)
+  const handleOwnedScroll = (e: any) => {
+    if (!ownedHasMore || ownedLoadingMore || ownedLoading) return;
+    const {layoutMeasurement, contentOffset, contentSize} = e.nativeEvent;
+    const viewportBottom = contentOffset.y + layoutMeasurement.height;
+    const threshold = contentSize.height * 0.75;
+    if (viewportBottom >= threshold) {
+      setOwnedLoadingMore(true);
+      setOwnedOffset(prev => prev + PAGE_SIZE);
+    }
   };
 
   const openBookingDetail = async (booking: Booking) => {
@@ -866,7 +922,7 @@ export default function HomeScreen() {
   return (
     <SafeAreaView style={styles.root}>
       {/* Top header */}
-      <View style={styles.header}>
+      <View style={[styles.header, {paddingTop: insets.top + 12}]}>
         <View style={styles.headerTopRow}>
           <Pressable
             style={styles.headerIconLeft}
@@ -1009,9 +1065,11 @@ export default function HomeScreen() {
                   styles.listContent,
                   {paddingBottom: bottomContentInset},
                 ]}
-                showsVerticalScrollIndicator={false}>
-                {ownedVehicles.map(b => (
-                  <View key={`${b.id}-${b.number}`} style={styles.card}>
+                showsVerticalScrollIndicator={false}
+                onScroll={handleOwnedScroll}
+                scrollEventThrottle={16}>
+                {ownedVehicles.map((b, idx) => (
+                  <View key={`${b.id || 'owned'}-${b.number || 'reg'}-${idx}`} style={styles.card}>
                     <View
                       style={[
                         styles.dateColumn,
@@ -1049,6 +1107,11 @@ export default function HomeScreen() {
                     </View>
                   </View>
                 ))}
+                {ownedLoadingMore ? (
+                  <View style={styles.loadMoreRow}>
+                    <Text style={styles.placeholderText}>Loading more...</Text>
+                  </View>
+                ) : null}
               </ScrollView>
             ) : (
               <View style={[styles.placeholder, {paddingBottom: bottomContentInset}]}>

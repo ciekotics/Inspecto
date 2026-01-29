@@ -1,8 +1,20 @@
 import React, {useEffect, useState} from 'react';
-import {SafeAreaView, View, Text, StyleSheet, Image, useWindowDimensions, TextInput, Pressable, KeyboardAvoidingView, Platform} from 'react-native';
+import {
+  SafeAreaView,
+  View,
+  Text,
+  StyleSheet,
+  Image,
+  useWindowDimensions,
+  TextInput,
+  Pressable,
+  KeyboardAvoidingView,
+  Platform,
+} from 'react-native';
 import Animated, {useSharedValue, withTiming, withDelay, useAnimatedStyle, Easing} from 'react-native-reanimated';
 import {SharedElement} from 'react-navigation-shared-element';
 import {useNavigation} from '@react-navigation/native';
+import {Eye, EyeOff} from 'lucide-react-native';
 import {useAppDispatch, useAppSelector} from '../store/hooks';
 import {login} from '../store/slices/authSlice';
 import {PRIMARY, PRIMARY_DARK} from '../utils/theme';
@@ -45,6 +57,7 @@ export default function LoginScreen() {
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [rowWidthMeasured, setRowWidthMeasured] = useState(0);
 
   useEffect(() => {
@@ -99,7 +112,7 @@ export default function LoginScreen() {
           </Animated.View>
 
           {/* Login form */}
-          <Animated.View style={[styles.formWrap, {width: FORM_WIDTH, alignSelf: 'center'}, formStyle]}> 
+          <Animated.View style={[styles.formWrap, {width: FORM_WIDTH, alignSelf: 'center'}, formStyle]}>
             <Text style={styles.label}>Email</Text>
             <TextInput
               value={email}
@@ -112,14 +125,19 @@ export default function LoginScreen() {
             />
 
             <Text style={[styles.label, {marginTop: 12}]}>Password</Text>
-            <TextInput
-              value={password}
-              onChangeText={setPassword}
-              placeholder="••••••••"
-              placeholderTextColor="rgba(0,0,0,0.35)"
-              secureTextEntry
-              style={styles.input}
-            />
+            <View style={styles.passwordRow}>
+              <TextInput
+                value={password}
+                onChangeText={setPassword}
+                placeholder=""
+                placeholderTextColor="rgba(0,0,0,0.35)"
+                secureTextEntry={!showPassword}
+                style={[styles.input, styles.passwordInput]}
+              />
+              <Pressable onPress={() => setShowPassword(prev => !prev)} hitSlop={12} style={styles.eyeBtn}>
+                {showPassword ? <EyeOff size={18} color="#6b7280" /> : <Eye size={18} color="#6b7280" />}
+              </Pressable>
+            </View>
 
             <Pressable style={styles.forgotBtn} onPress={() => {}}>
               <Text style={styles.forgotText}>Forgot your password ?</Text>
@@ -137,7 +155,7 @@ export default function LoginScreen() {
                 onLogin();
               }}
             >
-              <Text style={styles.loginText}>{auth.status === 'loading' ? 'Logging in…' : 'Log in'}</Text>
+              <Text style={styles.loginText}>{auth.status === 'loading' ? 'Logging in.' : 'Log in'}</Text>
             </Pressable>
           </Animated.View>
         </View>
@@ -168,6 +186,9 @@ const styles = StyleSheet.create({
     borderWidth: 0,
     color: '#111827',
   },
+  passwordRow: {flexDirection: 'row', alignItems: 'center', backgroundColor: '#ffffff', borderRadius: 6, height: 44, paddingHorizontal: 12},
+  passwordInput: {flex: 1, paddingHorizontal: 0, backgroundColor: 'transparent'},
+  eyeBtn: {marginLeft: 8, paddingVertical: 8},
   forgotBtn: {alignSelf: 'flex-end', paddingVertical: 10},
   forgotText: {color: 'rgba(255,255,255,0.78)', fontSize: 12, fontWeight: '600'},
   loginBtn: {marginTop: 10, height: 48, borderRadius: 999, alignItems: 'center', justifyContent: 'center', backgroundColor: PRIMARY_DARK, shadowColor: '#000', shadowOpacity: 0.25, shadowOffset: {width: 0, height: 8}, shadowRadius: 16, elevation: 4},

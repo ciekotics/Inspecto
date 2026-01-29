@@ -23,6 +23,7 @@ import {
   TapGestureHandler,
   State,
 } from 'react-native-gesture-handler';
+import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {nanoid} from '@reduxjs/toolkit';
 import {PRIMARY} from '../utils/theme';
 import {useAppDispatch, useAppSelector} from '../store/hooks';
@@ -46,6 +47,7 @@ type DefectItem = {
 const DefectivePartsScreen = () => {
   const navigation = useNavigation<any>();
   const route = useRoute();
+  const insets = useSafeAreaInsets();
   const {sellCarId} = (route.params as RouteParams) || {};
   const formattedSellCarId =
     sellCarId == null ? '' : String(sellCarId).trim();
@@ -83,6 +85,25 @@ const DefectivePartsScreen = () => {
   const [message, setMessage] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const lastSavedRef = useRef<string>('');
+
+  const errorMessage = (err: any) => {
+    if (!err) return '';
+    if (typeof err === 'string') return err;
+    const msg =
+      (typeof err?.data?.errors === 'string' && err.data.errors) ||
+      err?.data?.message ||
+      err?.data?.error ||
+      err?.error ||
+      err?.message ||
+      '';
+    if (msg && typeof msg === 'string') {
+      return msg;
+    }
+    if (typeof err?.status === 'number') {
+      return `Request failed (status ${err.status})`;
+    }
+    return '';
+  };
 
   const pieceCountLabel = useMemo(() => {
     const count = items.length;
@@ -281,18 +302,41 @@ const DefectivePartsScreen = () => {
       return;
     }
 
+    console.log('[DefectiveParts] submitting', {
+      sellCarId: formattedSellCarId,
+      inspectionId: inspectionId || formattedSellCarId,
+      items: items.map(it => ({
+        id: it.id,
+        hasUri: !!it.uri,
+        remarkLength: it.remark.trim().length,
+      })),
+      deletedFilesCount: deletedFiles.length,
+    });
+
     setSubmitting(true);
     try {
-      await addDefects({
+      const res = await addDefects({
         sellCarId: formattedSellCarId,
         inspectionId: inspectionId || formattedSellCarId,
         items,
         deletedFiles,
       }).unwrap();
+      console.log('[DefectiveParts] save success', {
+        sellCarId: formattedSellCarId,
+        inspectionId: inspectionId || formattedSellCarId,
+        itemCount: items.length,
+        deletedFilesCount: deletedFiles.length,
+        responseKeys: res ? Object.keys(res) : [],
+      });
       setMessage('Defective parts saved.');
       navigation.navigate('InspectionModules', {sellCarId: formattedSellCarId});
     } catch (err: any) {
-      setMessage(err?.message || 'Failed to save defective parts');
+      console.warn('[DefectiveParts] save failed', {
+        sellCarId: formattedSellCarId,
+        inspectionId: inspectionId || formattedSellCarId,
+        error: err,
+      });
+      setMessage(errorMessage(err) || 'Failed to save defective parts');
     } finally {
       setSubmitting(false);
     }
@@ -300,7 +344,7 @@ const DefectivePartsScreen = () => {
 
   return (
     <SafeAreaView style={styles.root}>
-      <View style={styles.header}>
+      <View style={[styles.header, {paddingTop: insets.top + 10, paddingBottom: 10}]}>
         <Pressable
           style={styles.backBtn}
           onPress={() => navigation.goBack()}
@@ -792,8 +836,6 @@ const styles = StyleSheet.create({
     borderTopColor: '#e5e7eb',
   },
 });
-
-
 
 
 

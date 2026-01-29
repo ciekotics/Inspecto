@@ -31,6 +31,7 @@ const appendFileToFormData = async (
   fd: FormData,
   fieldName: string,
   uri: string,
+  fileNameBase?: string,
 ) => {
   const ext = uri.split('.').pop() || 'jpg';
   const mime =
@@ -39,6 +40,8 @@ const appendFileToFormData = async (
       : ext === 'jpeg' || ext === 'jpg'
       ? 'image/jpeg'
       : 'application/octet-stream';
+  const baseName = fileNameBase || fieldName;
+  const fileName = `${baseName}.${ext}`;
   const isRemote = uri.startsWith('http://') || uri.startsWith('https://');
   if (isRemote) {
     try {
@@ -48,7 +51,7 @@ const appendFileToFormData = async (
         blob.type && blob.type.length > 0
           ? blob
           : new Blob([blob], {type: mime || 'application/octet-stream'});
-      (typedBlob as any).name = `${fieldName}.${ext}`;
+      (typedBlob as any).name = fileName;
       fd.append(fieldName, typedBlob as any);
       return;
     } catch (err) {
@@ -59,7 +62,7 @@ const appendFileToFormData = async (
     uri.startsWith('file://') || uri.startsWith('content://') ? uri : uri;
   fd.append(fieldName, {
     uri: normalizedUri,
-    name: `${fieldName}.${ext}`,
+    name: fileName,
     type: mime,
   } as any);
 };
@@ -105,27 +108,56 @@ export const inspectionApi = createApi({
         const fd = new FormData();
         fd.append('id', String(args.inspectionId || args.sellCarId));
         fd.append('sellCarId', args.sellCarId);
+        const reportsList = args.items.map(it => {
+          const isRemote =
+            typeof it.uri === 'string' &&
+            (it.uri.startsWith('http://') || it.uri.startsWith('https://'));
+          return {
+            'Defect image': isRemote ? it.uri : '',
+            Remark: typeof it.remark === 'string' ? it.remark : '',
+          };
+        });
+        const reportsPayload = {Report: reportsList};
+        const reportsJson = JSON.stringify(reportsPayload);
+        fd.append('Reports', reportsJson);
         fd.append(
-          'Reports',
-          JSON.stringify({
-            Report: args.items.map(it => ({
-              'Defect image': '',
-              Remark: it.remark || '',
-            })),
-          }),
+          'deletedFiles',
+          JSON.stringify((args.deletedFiles || []).filter(Boolean)),
         );
-        fd.append('deletedFiles', JSON.stringify(args.deletedFiles || []));
 
+        const appendedFiles: string[] = [];
         for (let i = 0; i < args.items.length; i += 1) {
           const uri = args.items[i].uri;
-          if (uri) {
-            await appendFileToFormData(fd, `defect[${i + 1}]`, uri);
+          const isRemote =
+            typeof uri === 'string' &&
+            (uri.startsWith('http://') || uri.startsWith('https://'));
+          if (uri && !isRemote) {
+            // Match web app behavior: field name defect[<idx>] but file name defect<idx>.ext
+            await appendFileToFormData(fd, `defect[${i + 1}]`, uri, `defect${i + 1}`);
+            appendedFiles.push(`defect[${i + 1}]`);
           }
         }
+
+        console.log('[inspectionApi/addDefects] payload', {
+          id: String(args.inspectionId || args.sellCarId),
+          sellCarId: args.sellCarId,
+          reportsPayload: reportsPayload,
+          reportsJson,
+          deletedFiles: (args.deletedFiles || []).filter(Boolean),
+          appendedFiles,
+          itemsSummary: args.items.map(it => ({
+            hasUri: !!it.uri,
+            isRemote:
+              typeof it.uri === 'string' &&
+              (it.uri.startsWith('http://') || it.uri.startsWith('https://')),
+            remarkLength: (it.remark || '').length,
+          })),
+        });
 
         const result = await baseQuery({
           url: '/api/add-defect-inspection',
           method: 'POST',
+          headers: {'Accept': '*/*'},
           body: fd,
         });
         if (result.error) {

@@ -19,6 +19,7 @@ import {
   launchImageLibrary,
   ImagePickerResponse,
 } from 'react-native-image-picker';
+import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {PRIMARY} from '../utils/theme';
 import {client} from '../utils/apiClient';
 
@@ -72,6 +73,7 @@ const INITIAL_FORM: RcForm = {
 const VehicleDetailsStep1BScreen = () => {
   const navigation = useNavigation<any>();
   const route = useRoute();
+  const insets = useSafeAreaInsets();
   const {sellCarId} = (route.params as RouteParams) || {};
   const formattedSellCarId = sellCarId == null ? '' : String(sellCarId).trim();
 
@@ -377,7 +379,7 @@ const VehicleDetailsStep1BScreen = () => {
 
   return (
     <SafeAreaView style={styles.root}>
-      <View style={styles.header}>
+      <View style={[styles.header, {paddingTop: insets.top + 10, paddingBottom: 10}]}>
         <Pressable
           style={styles.backBtn}
           onPress={() => navigation.goBack()}

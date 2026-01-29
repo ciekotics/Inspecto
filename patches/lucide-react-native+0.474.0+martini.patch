@@ -1,0 +1,22 @@
+diff --git a/node_modules/lucide-react-native/dist/esm/icons/martini.js b/node_modules/lucide-react-native/dist/esm/icons/martini.js
+new file mode 100644
+index 0000000..1b68682
+--- /dev/null
++++ b/node_modules/lucide-react-native/dist/esm/icons/martini.js
+@@ -0,0 +1,16 @@
++/**
++ * @license lucide-react-native v0.474.0 - ISC
++ *
++ * This source code is licensed under the ISC license.
++ * See the LICENSE file in the root directory of this source tree.
++ */
++
++import createLucideIcon from '../createLucideIcon.js';
++
++const Martini = createLucideIcon("Martini", [
++  ["path", { d: "M8 22h8", key: "rmew8v" }],
++  ["path", { d: "M12 11v11", key: "ur9y6a" }],
++  ["path", { d: "m19 3-7 8-7-8Z", key: "1sgpiw" }]
++]);
++
++export { Martini as default };

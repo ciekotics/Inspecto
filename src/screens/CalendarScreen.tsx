@@ -10,6 +10,7 @@ import {
   RefreshControl,
   Easing,
 } from 'react-native';
+import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {useNavigation} from '@react-navigation/native';
 import {Calendar, ChevronLeft, ChevronRight, Star, X} from 'lucide-react-native';
 import {PRIMARY} from '../utils/theme';
@@ -83,6 +84,7 @@ const TODAY_YEAR = TODAY.getFullYear();
 
 export default function CalendarScreen() {
   const navigation = useNavigation<any>();
+  const insets = useSafeAreaInsets();
   const [filter, setFilter] = useState<'today' | 'week' | 'all'>('today');
   const [selectedDay, setSelectedDay] = useState<number>(TODAY_DAY);
   const [currentMonth, setCurrentMonth] = useState<number>(TODAY_MONTH);
@@ -186,7 +188,6 @@ export default function CalendarScreen() {
         ? (calendarCache.slots as CalendarSlot[])
         : [];
       const hasFreshCache =
-        cachedSlots.length > 0 &&
         calendarCache.lastFetchedAt != null &&
         now - calendarCache.lastFetchedAt < CACHE_TTL_MS;
 
@@ -201,7 +202,15 @@ export default function CalendarScreen() {
       setError(null);
 
       try {
-        const isSuperAdmin = !!auth.user?.isSuperAdmin;
+        const roleNameRaw =
+          auth.user?.role?.role || auth.user?.roleName || auth.user?.role;
+        const roleName =
+          typeof roleNameRaw === 'string' ? roleNameRaw.trim() : '';
+        const isPrivileged =
+          !!auth.user?.isSuperAdmin ||
+          !!auth.user?.isAdmin ||
+          !!auth.user?.isSubAdmin ||
+          roleName.toUpperCase() === 'INSPECTION ENGINEER';
         const fullNameParts = [
           auth.user?.firstName,
           auth.user?.middleName,
@@ -215,7 +224,7 @@ export default function CalendarScreen() {
 
         let effectiveInspectorName: string | null = fullName || null;
 
-        if (!isSuperAdmin) {
+        if (!isPrivileged) {
           try {
             const evalRes = await client.get('/api/view-evaluator-list');
             const evaluators: any[] =
@@ -261,7 +270,7 @@ export default function CalendarScreen() {
           return true;
         });
 
-        if (!isSuperAdmin) {
+        if (!isPrivileged) {
           visibleSlots = visibleSlots.filter(slot => {
             const inspectorRaw = String(slot?.inspector || '').trim();
             const inspectorNorm = normalizeName(inspectorRaw || '');
@@ -675,7 +684,7 @@ export default function CalendarScreen() {
 
   return (
     <SafeAreaView style={styles.root}>
-      <View style={styles.header}>
+      <View style={[styles.header, {paddingTop: insets.top + 4}]}>
         <Pressable
           style={styles.headerIconLeft}
           onPress={() => navigation.goBack()}>

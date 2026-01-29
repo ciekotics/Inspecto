@@ -6,6 +6,7 @@ import {
   StyleSheet,
   Pressable,
 } from 'react-native';
+import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {useNavigation} from '@react-navigation/native';
 import {ChevronLeft} from 'lucide-react-native';
 import {useAppDispatch, useAppSelector} from '../store/hooks';
@@ -14,6 +15,7 @@ import {PRIMARY} from '../utils/theme';
 
 export default function ProfileScreen() {
   const navigation = useNavigation<any>();
+  const insets = useSafeAreaInsets();
   const dispatch = useAppDispatch();
   const user = useAppSelector(state => state.auth.user);
 
@@ -35,7 +37,7 @@ export default function ProfileScreen() {
 
   return (
     <SafeAreaView style={styles.root}>
-      <View style={styles.header}>
+      <View style={[styles.header, {paddingTop: insets.top + 10, paddingBottom: 10}]}>
         <Pressable onPress={() => navigation.goBack()}>
           <Text style={styles.backText}>{'‹'}</Text>
         </Pressable>
@@ -181,3 +183,4 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 });
+

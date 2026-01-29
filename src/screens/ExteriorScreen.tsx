@@ -9,6 +9,7 @@ import {
   Image,
   TextInput,
   Animated,
+  ActivityIndicator,
 } from 'react-native';
 import {useNavigation, useRoute} from '@react-navigation/native';
 import {ChevronLeft, Camera, Check, Eye, Image as ImageIcon, X} from 'lucide-react-native';
@@ -17,6 +18,7 @@ import {
   launchCamera,
   ImagePickerResponse,
 } from 'react-native-image-picker';
+import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {PRIMARY} from '../utils/theme';
 import {Modal} from 'react-native';
 import {AlertTriangle, CheckCircle, MinusCircle} from 'lucide-react-native';
@@ -99,6 +101,7 @@ const TYRE_OPTIONS: TyreValue[] = [
 const ExteriorScreen = () => {
   const navigation = useNavigation<any>();
   const route = useRoute();
+  const insets = useSafeAreaInsets();
   const {sellCarId} = (route.params as RouteParams) || {};
   const formattedSellCarId =
     sellCarId == null ? '' : String(sellCarId).trim();
@@ -128,6 +131,7 @@ const ExteriorScreen = () => {
     open: boolean;
     panelKey: string | null;
   }>({open: false, panelKey: null});
+  const [pickerUploading, setPickerUploading] = useState(false);
   const [previewVisible, setPreviewVisible] = useState(false);
   const [previewUri, setPreviewUri] = useState<string | null>(null);
   const [prefillLoading, setPrefillLoading] = useState(false);
@@ -199,6 +203,7 @@ const ExteriorScreen = () => {
       const scratch = panelStates[key]?.status;
       if (scratch) {
         try {
+          setPickerUploading(true);
           await uploadPanelImage(key, uri, scratch);
           setMessage('Panel updated.');
         } catch (err: any) {
@@ -208,6 +213,8 @@ const ExteriorScreen = () => {
               err?.message ||
               'Failed to upload panel',
           );
+        } finally {
+          setPickerUploading(false);
         }
       } else {
         setMessage('Select scratch status before uploading.');
@@ -329,6 +336,16 @@ const ExteriorScreen = () => {
     fd.append('scratch', scratch);
 
     if (uri) {
+      const normalizeFileUri = (u: string) => {
+        if (!u) return u;
+        if (u.startsWith('file://') || u.startsWith('content://') || u.startsWith('http')) {
+          return u;
+        }
+        if (u.startsWith('/')) {
+          return `file://${u}`;
+        }
+        return u;
+      };
       const ext = uri.split('.').pop() || 'jpg';
       const mime =
         ext === 'png'
@@ -339,8 +356,7 @@ const ExteriorScreen = () => {
       const sanitizedName = panelName
         .replace(/&/g, 'And')
         .replace(/\s+/g, '');
-      const normalizedUri =
-        uri.startsWith('file://') || uri.startsWith('content://') ? uri : uri;
+      const normalizedUri = normalizeFileUri(uri);
       photoMeta = {
         uri: normalizedUri,
         name: `${sanitizedName}.${ext}`,
@@ -751,7 +767,7 @@ const ExteriorScreen = () => {
 
   return (
     <SafeAreaView style={styles.root}>
-      <View style={styles.header}>
+      <View style={[styles.header, {paddingTop: insets.top + 10, paddingBottom: 10}]}>
         <Pressable
           style={styles.backBtn}
           onPress={() => navigation.goBack()}
@@ -1030,19 +1046,38 @@ const ExteriorScreen = () => {
           <View style={styles.pickerSheet}>
             <Text style={styles.pickerTitle}>Add photo</Text>
             <Text style={styles.pickerSubtitle}>Choose source</Text>
+            {pickerUploading ? (
+              <View style={styles.pickerUploadingRow}>
+                <ActivityIndicator color="#111827" size="small" />
+                <Text style={styles.pickerUploadingText}>Uploading in progress...</Text>
+              </View>
+            ) : null}
             <View style={styles.pickerActions}>
               <Pressable
-                style={styles.pickerBtn}
+                style={[
+                  styles.pickerBtn,
+                  pickerUploading && styles.pickerBtnDisabled,
+                ]}
+                disabled={pickerUploading}
                 onPress={() => handlePick('camera')}>
                 <Text style={styles.pickerBtnText}>Camera</Text>
               </Pressable>
               <Pressable
-                style={styles.pickerBtn}
+                style={[
+                  styles.pickerBtn,
+                  pickerUploading && styles.pickerBtnDisabled,
+                ]}
+                disabled={pickerUploading}
                 onPress={() => handlePick('library')}>
                 <Text style={styles.pickerBtnText}>Library</Text>
               </Pressable>
               <Pressable
-                style={[styles.pickerBtn, styles.pickerCancel]}
+                style={[
+                  styles.pickerBtn,
+                  styles.pickerCancel,
+                  pickerUploading && styles.pickerBtnDisabled,
+                ]}
+                disabled={pickerUploading}
                 onPress={() => setPickerVisible({open: false, panelKey: null})}>
                 <Text style={[styles.pickerBtnText, {color: '#b91c1c'}]}>
                   Cancel
@@ -1452,6 +1487,17 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#9ca3af',
   },
+  pickerUploadingRow: {
+    marginTop: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  pickerUploadingText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#f3f4f6',
+  },
   pickerActions: {
     marginTop: 16,
     flexDirection: 'row',
@@ -1472,6 +1518,9 @@ const styles = StyleSheet.create({
     color: '#e5e7eb',
     fontSize: 14,
     fontWeight: '700',
+  },
+  pickerBtnDisabled: {
+    opacity: 0.5,
   },
   pickerCancel: {
     borderColor: '#b91c1c',

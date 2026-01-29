@@ -10,6 +10,7 @@ import {
   ScrollView,
 } from 'react-native';
 import {useNavigation, useRoute} from '@react-navigation/native';
+import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {ChevronLeft, AlertTriangle} from 'lucide-react-native';
 import {client} from '../utils/apiClient';
 import {PRIMARY} from '../utils/theme';
@@ -51,6 +52,7 @@ const EvalOption = ({
 export default function InspectionScreen() {
   const navigation = useNavigation<any>();
   const route = useRoute();
+  const insets = useSafeAreaInsets();
   const {sellCarId} = (route.params as RouteParams) || {};
   const [evaluationType, setEvaluationType] = useState<EvalType>('Non-Scrap');
   const [registrationNumber, setRegistrationNumber] = useState('');
@@ -151,7 +153,7 @@ export default function InspectionScreen() {
 
   return (
     <SafeAreaView style={styles.root}>
-      <View style={styles.header}>
+      <View style={[styles.header, {paddingTop: insets.top + 4}]}>
         <Pressable
           style={styles.backBtn}
           onPress={() => navigation.goBack()}
